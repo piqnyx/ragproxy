@@ -1,0 +1,87 @@
+##################################################
+# >> RAG Proxy Configuration
+##################################################
+
+
+# Listen address for the proxy server
+Listen = "0.0.0.0:11434"
+# Token buffer reserve % (positive will add reserve, negative will reduce)
+TokenBufferReserve = 10
+# Tags used to parse clean user prompt
+UserMessageTags = ["userRequest", "prompt"]
+# Tags used to parse files and other attachments
+UserMessageAttachmentTags = ["attachment"]
+
+
+##################################################
+# >> Ollama
+##################################################
+
+
+# Ollama base URL
+OllamaBase = "http://127.0.0.1:11435"
+# Keep alive after message for Ollama
+OllamaKeepAlive = "0s"
+OllamaUnloadBeforeEmbedding = true
+
+# Embedding model for vectorization
+EmbeddingModel = "qwen3-embedding:8b-q8_0"
+# Endpoint for embeddings API
+EmbeddingsEndpoint = "/api/embeddings"
+EmbeddingsModeWindowSize = 40960
+
+# Main model for chat
+MainModel = "qwen3-coder:30b-a3b-q8_0"
+MainModelWindowSize = 262144
+
+
+##################################################
+# >> Qadrant
+##################################################
+
+
+# Qdrant host
+QdrantHost = "localhost"
+# Qdrant port
+QdrantPort = 6334
+# Qdrant keep alive send packet every 10s
+QdrantKeepAlive = 10
+# Qdrant collection name
+QdrantCollection = "dialogs"
+
+# Vector metric (Cosine | Euclid | Dot)
+QdrantMetric = "Cosine"
+# Vector size
+QdrantVectorSize = 4096
+
+
+##################################################
+# >> Search
+##################################################
+
+
+# Select where to search. Available value: user,assistant,file
+SearchSource = ["user", "assistant", "file"]
+# Trim by time window. Last X days of memory (-1 from the begining of the world)
+SearchMaxAgeDays = 14
+# Limit Top K results (-1 to the moon and back)
+SearchTopK = 100
+
+
+##################################################
+# >> Feed
+##################################################
+
+
+# User prompt will be feeded with some of found contexts. How much space of full model context to feed in %? (minimal 1)
+FeedAugmentationPercent = 25
+
+
+##################################################
+# >> Logs
+##################################################
+
+
+# Verbose disk logs
+VerboseDiskLogs = true
+
