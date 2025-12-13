@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"os/exec"
+	"time"
 )
 
 // ollamaRequest makes a POST request to Ollama API endpoint with payload, logs if verbose
@@ -52,8 +53,8 @@ func ollamaRequest(endpoint string, payload map[string]any) (map[string]any, err
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		appCtx.ErrorLogger.Printf("Ollama %s returned status %d: %s", endpoint, resp.StatusCode, string(bodyBytes))
-		return nil, fmt.Errorf("ollama %s returned status %d", endpoint, resp.StatusCode)
+		appCtx.AccessLogger.Printf("Ollama %s returned status %d: %s. Will retry maybe", endpoint, resp.StatusCode, string(bodyBytes))
+		return nil, fmt.Errorf("ollama %s returned status %d. Will retry maybe", endpoint, resp.StatusCode)
 	}
 
 	var result map[string]any
@@ -73,38 +74,58 @@ func ollamaRequest(endpoint string, payload map[string]any) (map[string]any, err
 }
 
 // embedText generates a 4096-dimensional vector for the given text using Ollama embeddings API
-func embedText(text string) ([]float32, error) {
-	if appCtx.Config.OllamaUnloadBeforeEmbedding {
-		err := exec.Command("ollama", "stop", appCtx.Config.MainModel).Run()
+func embedText(text string) (vector []float32, err error) {
+
+	tryEmbedding := func() ([]float32, error) {
+		result, err := ollamaRequest(appCtx.Config.EmbeddingsEndpoint, map[string]any{
+			"model":  appCtx.Config.EmbeddingModel,
+			"prompt": text,
+		})
 		if err != nil {
-			appCtx.AccessLogger.Printf("Unable to unload model %s: %v", appCtx.Config.MainModel, err)
+			return nil, err
 		}
-	}
-	result, err := ollamaRequest(appCtx.Config.EmbeddingsEndpoint, map[string]any{
-		"model":  appCtx.Config.EmbeddingModel,
-		"prompt": text,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("error getting embeddings: %w", err)
-	}
-
-	embedding, ok := result["embedding"].([]any)
-	if !ok {
-		return nil, fmt.Errorf("invalid embedding format in response")
-	}
-
-	vector := make([]float32, len(embedding))
-	for i, v := range embedding {
-		if f, ok := v.(float64); ok {
-			vector[i] = float32(f)
-		} else {
-			return nil, fmt.Errorf("embedding value not float64 at index %d", i)
+		embedding, ok := result["embedding"].([]any)
+		if !ok {
+			return nil, fmt.Errorf("invalid embedding format in response")
 		}
+		vector := make([]float32, len(embedding))
+		for i, v := range embedding {
+			if f, ok := v.(float64); ok {
+				vector[i] = float32(f)
+			} else {
+				return nil, fmt.Errorf("embedding value not float64 at index %d", i)
+			}
+		}
+		if len(vector) != appCtx.Config.QdrantVectorSize {
+			return nil, fmt.Errorf("expected %d-dim vector, got %d", appCtx.Config.QdrantVectorSize, len(vector))
+		}
+		return vector, nil
 	}
 
-	if len(vector) != 4096 {
-		return nil, fmt.Errorf("expected 4096-dim vector, got %d", len(vector))
+	vector, err = tryEmbedding()
+	if err == nil {
+		if appCtx.Config.VerboseDiskLogs {
+			appCtx.AccessLogger.Printf("Successfully generated embedding vector on first try")
+		}
+		return vector, nil
 	}
 
-	return vector, nil
+	// If embedding failed and unload before embedding is enabled, try unloading main model and retry
+	if appCtx.Config.OllamaUnloadBeforeEmbedding {
+		appCtx.AccessLogger.Printf("Embedding failed, trying to unload main model and retry: %v", err)
+		exec.Command("ollama", "stop", appCtx.Config.MainModel).Run()
+
+		// Wait a moment for the model to unload
+		time.Sleep(2 * time.Second)
+
+		vector, err = tryEmbedding()
+		if err == nil {
+			return vector, nil
+		}
+		appCtx.ErrorLogger.Printf("Embedding failed after unload: %v", err)
+		return nil, err
+	}
+
+	appCtx.ErrorLogger.Printf("Initial embedding attempt failed, OllamaUnloadBeforeEmbedding is false: %v", err)
+	return nil, err
 }

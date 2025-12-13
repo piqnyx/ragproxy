@@ -6,7 +6,7 @@ import (
 )
 
 // calcMetaSize calculates metadata token size and remaining window size
-func calcMetaSize(req map[string]any) (metaSize int, err error) {
+func calcMetaSize(req map[string]any) (metaSize int64, err error) {
 	meta := make(map[string]any)
 	for k, v := range req {
 		if k != "messages" {
@@ -24,7 +24,7 @@ func calcMetaSize(req map[string]any) (metaSize int, err error) {
 }
 
 // calcSystemMsgSize calculates system message size and returns the message
-func calcSystemMsgSize(req map[string]any) (systemMsgSize int, systemMsg map[string]any, found bool, err error) {
+func calcSystemMsgSize(req map[string]any) (systemMsgSize int64, systemMsg map[string]any, found bool, err error) {
 	messages := req["messages"].([]any)
 	systemMsg = messages[0].(map[string]any)
 	if role, ok := systemMsg["role"].(string); !ok || role != "system" {
@@ -48,7 +48,7 @@ func calcSystemMsgSize(req map[string]any) (systemMsgSize int, systemMsg map[str
 }
 
 // calcUserPromptSize calculates user prompt message size and returns the message
-func calcUserPromptSize(req map[string]any) (userPromptSize int, userPromptMsg map[string]any, err error) {
+func calcUserPromptSize(req map[string]any) (userPromptSize int64, userPromptMsg map[string]any, err error) {
 	messages := req["messages"].([]any)
 	userPromptMsg = messages[len(messages)-1].(map[string]any)
 	if role, ok := userPromptMsg["role"].(string); !ok || role != "user" {
@@ -66,7 +66,7 @@ func calcUserPromptSize(req map[string]any) (userPromptSize int, userPromptMsg m
 }
 
 // calcSizes calculates feed and history sizes based on the request
-func calcSizes(req map[string]any) (feedSize int, historySize int, systemMsg map[string]any, userPromptMsg map[string]any, err error) {
+func calcSizes(req map[string]any) (feedSize int64, historySize int64, systemMsg map[string]any, userPromptMsg map[string]any, err error) {
 	windowSize := appCtx.Config.MainModelWindowSize
 	metaSize, err := calcMetaSize(req)
 	if err != nil {

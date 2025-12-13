@@ -1,156 +1,14 @@
 package main
 
 import (
-	"context"
+	"crypto/sha512"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"time"
 
-	"github.com/qdrant/go-client/qdrant"
+	"github.com/google/uuid"
 )
-
-// Attachment represents a user message attachment
-func storeAttachments(attachments []Attachment) error {
-	for _, att := range attachments {
-		if appCtx.Config.VerboseDiskLogs {
-			appCtx.DebugLogger.Printf("Storing attachment ID: %s\nBody length: %d\nBody: %s", att.ID, len(att.Body), att.Body)
-		}
-
-	}
-	return nil
-}
-
-// SearchRelevantContent ищет релевантные записи по вектору и фильтрам из конфига
-func SearchRelevantContent(queryVector []float32, now time.Time) ([]Payload, error) {
-	var results []Payload
-
-	err := withDB(func() error {
-		// Retrieve filter parameters from config
-		roles := appCtx.Config.SearchSource
-		maxAgeDays := appCtx.Config.SearchMaxAgeDays
-		topK := uint64(appCtx.Config.SearchTopK)
-
-		if appCtx.Config.VerboseDiskLogs {
-			appCtx.DebugLogger.Printf("Searching relevant content with roles: %v, maxAgeDays: %d, topK: %d, queryVector: %v", roles, maxAgeDays, topK, queryVector)
-		} else {
-			appCtx.DebugLogger.Printf("Searching relevant content with roles: %v, maxAgeDays: %d, topK: %d", roles, maxAgeDays, topK)
-		}
-
-		// Create filter conditions
-		var conditions []*qdrant.Condition
-
-		// Filter by roles (role must be one of the specified roles)
-		conditions = append(conditions, &qdrant.Condition{
-			ConditionOneOf: &qdrant.Condition_Field{
-				Field: &qdrant.FieldCondition{
-					Key: "role",
-					Match: &qdrant.Match{
-						MatchValue: &qdrant.Match_Keywords{
-							Keywords: &qdrant.RepeatedStrings{
-								Strings: roles,
-							},
-						},
-					},
-				},
-			},
-		})
-
-		// Filter by time (if maxAgeDays > 0)
-		if maxAgeDays > 0 {
-			minTimestamp := now.Add(-time.Duration(maxAgeDays) * 24 * time.Hour).Unix()
-			minTimestampFloat := float64(minTimestamp)
-			conditions = append(conditions, &qdrant.Condition{
-				ConditionOneOf: &qdrant.Condition_Field{
-					Field: &qdrant.FieldCondition{
-						Key: "timestamp",
-						Range: &qdrant.Range{
-							Gte: &minTimestampFloat,
-						},
-					},
-				},
-			})
-		}
-
-		// Build the final filter
-		filter := &qdrant.Filter{
-			Must: conditions,
-		}
-
-		// Search in Qdrant
-		searchResult, err := appCtx.DB.Query(context.Background(), &qdrant.QueryPoints{
-			CollectionName: appCtx.Config.QdrantCollection,
-			Query:          qdrant.NewQuery(queryVector...),
-			Filter:         filter,
-			Limit:          &topK,
-			WithPayload:    qdrant.NewWithPayload(true), // Return the entire payload
-		})
-		if err != nil {
-			appCtx.ErrorLogger.Printf("Error during Qdrant search: %v", err)
-			return fmt.Errorf("error during Qdrant search: %w", err)
-		}
-
-		if appCtx.Config.VerboseDiskLogs {
-			appCtx.DebugLogger.Printf("Qdrant search returned %d results: %v", len(searchResult), searchResult)
-		} else {
-			appCtx.DebugLogger.Printf("Qdrant search returned %d results", len(searchResult))
-		}
-
-		// Parse results
-		for _, point := range searchResult {
-			var payload Payload
-
-			// Extract fields from payload
-			if v, ok := point.Payload["packet_id"]; ok && v.GetStringValue() != "" {
-				payload.PacketID = v.GetStringValue()
-			}
-			if v, ok := point.Payload["timestamp"]; ok {
-				payload.Timestamp = int64(v.GetIntegerValue())
-			}
-			if v, ok := point.Payload["role"]; ok && v.GetStringValue() != "" {
-				payload.Role = v.GetStringValue()
-			}
-			if v, ok := point.Payload["body"]; ok && v.GetStringValue() != "" {
-				payload.Body = v.GetStringValue()
-			}
-			if v, ok := point.Payload["token_count"]; ok {
-				payload.TokenCount = int(v.GetIntegerValue())
-			}
-			if v, ok := point.Payload["hash"]; ok && v.GetStringValue() != "" {
-				payload.Hash = v.GetStringValue()
-			}
-
-			// Extract file_meta
-			if v, ok := point.Payload["file_meta"]; ok {
-				fileMeta := v.GetStructValue()
-				if fileMeta != nil {
-					if id, ok := fileMeta.Fields["id"]; ok && id.GetStringValue() != "" {
-						payload.FileMeta.ID = id.GetStringValue()
-					}
-					if path, ok := fileMeta.Fields["path"]; ok && path.GetStringValue() != "" {
-						payload.FileMeta.Path = path.GetStringValue()
-					}
-				}
-			}
-
-			results = append(results, payload)
-		}
-
-		if appCtx.Config.VerboseDiskLogs {
-			appCtx.DebugLogger.Printf("Parsed %d relevant content payloads: %v", len(results), results)
-		} else {
-			appCtx.DebugLogger.Printf("Parsed %d relevant content payloads", len(results))
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	return results, nil
-}
 
 func decodeTag(b64 string) string {
 	b, _ := base64.StdEncoding.DecodeString(b64)
@@ -158,30 +16,28 @@ func decodeTag(b64 string) string {
 }
 
 // feedPrompt processes the parsed request elements (placeholder for RAG logic)
-func feedPrompt(cleanUserContent string, req map[string]any) (err error, changed bool) {
+func feedPrompt(cleanUserContent string, req map[string]any) (changed bool, promptVector []float32, err error) {
 
 	feedSize, historySize, systemMsg, userPromptMsg, err := calcSizes(req)
 	if err != nil {
-		return err, false
+		return false, nil, err
 	}
 	appCtx.AccessLogger.Printf("System message: %t, User prompt message: %t", systemMsg != nil, userPromptMsg != nil)
-	appCtx.DebugLogger.Printf("System message: %t, User prompt message: %t", systemMsg != nil, userPromptMsg != nil)
 
-	promptVector, err := embedText(cleanUserContent)
+	promptVector, err = embedText(cleanUserContent)
 	if err != nil {
-		return err, false
+		return false, nil, err
 	}
 
 	if appCtx.Config.VerboseDiskLogs {
 		appCtx.AccessLogger.Printf("Prompt vector generated. Length: %d, Content: %v", len(promptVector), promptVector)
-		appCtx.DebugLogger.Printf("Prompt vector generated. Length: %d, Content: %v", len(promptVector), promptVector)
 	} else {
 		appCtx.AccessLogger.Printf("Prompt vector generated. Length: %d", len(promptVector))
 	}
 
-	relevantContent, err := SearchRelevantContent(promptVector, time.Now())
+	relevantContent, err := SearchRelevantContent(promptVector)
 	if err != nil {
-		return err, false
+		return false, nil, err
 	}
 
 	var feeds []map[string]any
@@ -234,7 +90,6 @@ func feedPrompt(cleanUserContent string, req map[string]any) (err error, changed
 	historySize += feedSize // Use remaining for history
 
 	appCtx.AccessLogger.Printf("Prepared %d feed messages. Remaining feed size: %d", len(feeds), feedSize)
-	appCtx.DebugLogger.Printf("Prepared %d feed messages. Remaining feed size: %d", len(feeds), feedSize)
 
 	// Create slice for history messages within updated history size
 	var history []map[string]any
@@ -253,12 +108,12 @@ func feedPrompt(cleanUserContent string, req map[string]any) (err error, changed
 	for i := startIdx; i >= endIdx; i-- {
 		msgMap, ok := messages[i].(map[string]any)
 		if !ok {
-			return fmt.Errorf("invalid message format in request"), false
+			return false, nil, fmt.Errorf("invalid message format in request")
 		}
 
 		msgBytes, err := json.Marshal(msgMap)
 		if err != nil {
-			return err, false
+			return false, nil, err
 		}
 		msgStr := string(msgBytes)
 		msgSize := calculateTokensWithReserve(msgStr)
@@ -272,7 +127,6 @@ func feedPrompt(cleanUserContent string, req map[string]any) (err error, changed
 	}
 
 	appCtx.AccessLogger.Printf("Prepared %d history messages. Remaining history size: %d", len(history), historySize)
-	appCtx.DebugLogger.Printf("Prepared %d history messages. Remaining history size: %d", len(history), historySize)
 
 	var resultMessages []map[string]any
 
@@ -303,39 +157,35 @@ func feedPrompt(cleanUserContent string, req map[string]any) (err error, changed
 
 	if appCtx.Config.VerboseDiskLogs {
 		appCtx.AccessLogger.Printf("Final messages count: %d, request: %v", len(msgs), msgs)
-		appCtx.DebugLogger.Printf("Final messages count: %d, request: %v", len(msgs), msgs)
 	} else {
 		appCtx.AccessLogger.Printf("Final messages count in request: %d", len(msgs))
 	}
 
-	return nil, true
+	return true, promptVector, nil
 }
 
 // processInbound processes the inbound request data (placeholder)
-func processInbound(data string) string {
+func processInbound(data string) (responseBody string, cleanUserContent string, attachments []Attachment, promptVector []float32) {
 
 	req := make(map[string]any)
 	if err := json.Unmarshal([]byte(data), &req); err != nil {
 		if appCtx.Config.VerboseDiskLogs {
-			appCtx.AccessLogger.Printf("Skipping processing. Reason: data is not valid JSON.")
+			appCtx.AccessLogger.Printf("Skipping processing. Reason: data is not valid JSON: %s", data)
 		}
-		return data
+		return data, "", nil, nil
 	}
 
 	if appCtx.Config.VerboseDiskLogs {
 		appCtx.AccessLogger.Printf("Inbound data: %s", truncateJSONStrings(data))
 	}
 
-	cleanUserContent, attachments, err := processMessages(req)
+	var err error
+	cleanUserContent, attachments, err = processMessages(req)
 	if err != nil {
 		if appCtx.Config.VerboseDiskLogs {
 			appCtx.AccessLogger.Printf("Skipping processing. Reason: %v", err)
 		}
-		return data
-	}
-
-	if err := storeAttachments(attachments); err != nil {
-		appCtx.ErrorLogger.Printf("Error storing attachments: %v", err)
+		return data, "", nil, nil
 	}
 
 	if appCtx.Config.VerboseDiskLogs {
@@ -345,36 +195,216 @@ func processInbound(data string) string {
 		appCtx.AccessLogger.Printf("Full request object: %v", req)
 	}
 
-	err, changed := feedPrompt(cleanUserContent, req)
+	changed, promptVector, err := feedPrompt(cleanUserContent, req)
 	if err != nil {
 		appCtx.ErrorLogger.Printf("Error in feedPrompt: %v", err)
-		return data
+		return data, "", nil, nil
 	}
 
 	if !changed {
 		if appCtx.Config.VerboseDiskLogs {
 			appCtx.AccessLogger.Printf("No changes made to the request.")
 		}
-		return data
+		return data, "", nil, nil
 	}
 
 	// Marhall and return modified request (currently unchanged)
 	modifiedData, err := json.Marshal(req)
 	if err != nil {
 		appCtx.ErrorLogger.Printf("Error marshaling modified req: %v", err)
-		return data
+		return data, "", nil, nil
 	}
 
 	if appCtx.Config.VerboseDiskLogs {
+		reqBytes, _ := json.Marshal(req)
 		appCtx.AccessLogger.Printf("Modified request object: %v", req)
+		appCtx.AccessLogger.Printf("Modified request object JSON: %s", string(reqBytes))
 	} else {
 		appCtx.AccessLogger.Printf("Modified request object prepared. Original: %d bytes, Modified: %d bytes", len(data), len(modifiedData))
 	}
-	return string(modifiedData)
+	return string(modifiedData), cleanUserContent, attachments, promptVector
+}
+
+// sha512sum computes the SHA-512 hash of the given text and returns it as a hexadecimal string
+func sha512sum(text string) string {
+	hash := sha512.Sum512([]byte(text))
+	return hex.EncodeToString(hash[:])
+}
+
+func calcFileSize(att Attachment) (tokenCount int64, err error) {
+	// Formatting content with tags to compute tokens
+	openFilesTag := "<" + decodeTag(appConsts.Base64FilesTag) + ">"
+	closeFilesTag := "</" + decodeTag(appConsts.Base64FilesTag) + ">"
+	openFileTag := "<" + decodeTag(appConsts.Base64FileTag) + ` id="%s">`
+	closeFileTag := "</" + decodeTag(appConsts.Base64FileTag) + ">"
+
+	content := fmt.Sprintf(
+		`%s
+
+%s
+// filepath: %s
+%s
+%s
+
+</%s>`,
+		openFilesTag,
+		fmt.Sprintf(openFileTag, att.ID),
+		att.Path,
+		att.Body,
+		closeFileTag,
+		closeFilesTag,
+	)
+
+	msg := map[string]any{
+		"content": content,
+		"role":    "user",
+	}
+
+	// Marshal message to JSON string
+	msgBytes, err := json.Marshal(msg)
+	if err != nil {
+		return 0, fmt.Errorf("error marshaling attachment message: %w", err)
+	}
+	msgStr := string(msgBytes)
+
+	// Calculate token count with reserve
+	return calculateTokensWithReserve(msgStr), nil
+}
+
+// Attachment represents a user message attachment
+func storeAttachments(attachments []Attachment, packetID string) error {
+
+	appCtx.DebugLogger.Printf("Storing %d attachments for packet ID: %s: %v", len(attachments), packetID, attachments)
+
+	toInsert, toReplace, err := planAttachmentSync(attachments)
+	if err != nil {
+		return fmt.Errorf("error planning attachment sync: %w", err)
+	}
+
+	if appCtx.Config.VerboseDiskLogs {
+		appCtx.DebugLogger.Printf("Attachments to replace: %v", toReplace)
+		appCtx.DebugLogger.Printf("Attachments to insert: %v", toInsert)
+	}
+
+	proc := func(listAttachments []AttachmentReplacement) error {
+		replace := false
+		var pointID string
+		for _, att := range listAttachments {
+
+			replace = att.OldPointID == "-"
+
+			if appCtx.Config.VerboseDiskLogs {
+				appCtx.DebugLogger.Printf("Storing attachment ID: %s\nBody length: %d\nBody: %s", att.Attachment.ID, len(att.Attachment.Body), att.Attachment.Body)
+			}
+
+			attachmentVector, err := embedText(att.Attachment.Body)
+			if err != nil {
+				return fmt.Errorf("error embedding attachment ID %s: %w", att.Attachment.ID, err)
+			}
+
+			tokenCount, err := calcFileSize(att.Attachment)
+			if err != nil {
+				return fmt.Errorf("error calculating token size for attachment ID %s: %w", att.Attachment.ID, err)
+			}
+
+			if appCtx.Config.VerboseDiskLogs {
+				appCtx.DebugLogger.Printf("Attachment ID %s token count: %d", att.Attachment.ID, tokenCount)
+			}
+
+			if replace {
+				pointID = att.OldPointID
+			} else {
+				pointID = uuid.NewString()
+			}
+			// Upsert attachment
+			err = upsertPoint(att.Attachment.Body, attachmentVector, "file", tokenCount, att.Attachment.Hash, packetID, &FileMeta{
+				ID:   att.Attachment.ID,
+				Path: att.Attachment.Path,
+			}, pointID)
+			if err != nil {
+				return fmt.Errorf("error upserting attachment point: %w", err)
+			}
+		}
+		return nil
+	}
+
+	if len(toReplace) > 0 {
+		if appCtx.Config.VerboseDiskLogs {
+			appCtx.DebugLogger.Printf("Processing %d attachments for replacement", len(toReplace))
+		}
+		if err := proc(toReplace); err != nil {
+			return fmt.Errorf("error processing attachments for replacement: %w", err)
+		}
+	}
+
+	if len(toInsert) > 0 {
+		if appCtx.Config.VerboseDiskLogs {
+			appCtx.DebugLogger.Printf("Processing %d attachments for insertion", len(toInsert))
+		}
+		if err := proc(toInsert); err != nil {
+			return fmt.Errorf("error processing attachments for insertion: %w", err)
+		}
+	}
+
+	if appCtx.Config.VerboseDiskLogs {
+		appCtx.DebugLogger.Printf("All attachments processed successfully.")
+	}
+
+	return nil
 }
 
 // processOutbound processes the outbound response data (placeholder)
-func processOutbound(data string) string {
-	// appCtx.DebugLogger.Printf("Outbound data: %s", data)
-	return data
+func processOutbound(cleanAssistantContent string, cleanUserContent string, attachments []Attachment, promptVector []float32) {
+
+	if appCtx.Config.VerboseDiskLogs {
+		appCtx.AccessLogger.Printf("Request parsed data: Vector length: %d, Clean user content: %s, Attachments count: %d, Attachments: %v, Prompt vector: %v", len(promptVector), cleanUserContent, len(attachments), attachments, promptVector)
+	}
+
+	packetID := uuid.NewString()
+	if appCtx.Config.VerboseDiskLogs {
+		appCtx.AccessLogger.Printf("Generated packet ID: %s", packetID)
+	}
+
+	responseVector, err := embedText(cleanAssistantContent)
+	if err != nil {
+		appCtx.ErrorLogger.Printf("Error embedding assistant content: %v", err)
+		return
+	}
+
+	if appCtx.Config.VerboseDiskLogs {
+		appCtx.AccessLogger.Printf("Response vector generated. Length: %d, Content: %v", len(responseVector), responseVector)
+	} else {
+		appCtx.AccessLogger.Printf("Response vector generated. Length: %d", len(responseVector))
+	}
+
+	promptSize := calculateTokensWithReserve(appConsts.UserMessageLeftWrapper + cleanUserContent + appConsts.UserMessageRightWrapper)
+	assistantSize := calculateTokensWithReserve(appConsts.AssistantMessageLeftWrapper + cleanAssistantContent + appConsts.AssistantMessageRightWrapper)
+
+	appCtx.AccessLogger.Printf("Calculated token sizes - Prompt: %d, Assistant: %d", promptSize, assistantSize)
+
+	promptHash := sha512sum(cleanUserContent)
+	assistantHash := sha512sum(cleanAssistantContent)
+
+	appCtx.AccessLogger.Printf("Calculated content hashes - Prompt: %s, Assistant: %s", promptHash, assistantHash)
+
+	// Store user message
+	err = upsertPoint(cleanUserContent, promptVector, "user", promptSize, promptHash, packetID, nil, uuid.NewString())
+	if err != nil {
+		appCtx.ErrorLogger.Printf("Error storing user message: %v", err)
+		return
+	}
+
+	// Store assistant message
+	err = upsertPoint(cleanAssistantContent, responseVector, "assistant", assistantSize, assistantHash, packetID, nil, uuid.NewString())
+	if err != nil {
+		appCtx.ErrorLogger.Printf("Error storing assistant message: %v", err)
+		return
+	}
+
+	err = storeAttachments(attachments, packetID)
+	if err != nil {
+		appCtx.ErrorLogger.Printf("Error storing attachments: %v", err)
+		return
+	}
+
 }

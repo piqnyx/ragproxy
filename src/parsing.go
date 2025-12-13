@@ -7,12 +7,6 @@ import (
 	"strings"
 )
 
-// Attachment represents a file attachment
-type Attachment struct {
-	ID   string `json:"id"`
-	Body string `json:"body"` // сохраняем все переводы строк как в оригинале
-}
-
 // parseAttachments scans the provided content for any of the tags listed in `tags` (comma-separated).
 // For each found tag it:
 //   - looks for a line "// filepath: /path/to/file" inside the tag body and extracts the file path,
@@ -22,8 +16,7 @@ type Attachment struct {
 //   - trims outer empty lines and returns Attachment{ID, Body}.
 //
 // If the body contains "User's active selection" (case-insensitive) the block is skipped.
-func parseAttachments(content string, tagList []string) []Attachment {
-	var out []Attachment
+func parseAttachments(content string, tagList []string) (attachments []Attachment) {
 
 	// regex to find a filepath line like: // filepath: /home/piqnyx/...
 	fpLineRe := regexp.MustCompile(`(?im)^[ \t]*//[ \t]*filepath:[ \t]*(.+)$`)
@@ -94,14 +87,16 @@ func parseAttachments(content string, tagList []string) []Attachment {
 			// Trim outer empty lines but preserve internal newlines
 			bodyAfter = strings.Trim(bodyAfter, "\r\n")
 
-			out = append(out, Attachment{
+			attachments = append(attachments, Attachment{
 				ID:   id,
 				Body: bodyAfter,
+				Path: filePath,
+				Hash: sha512sum(bodyAfter),
 			})
 		}
 	}
 
-	return out
+	return attachments
 }
 
 // extractByTags extracts content within specified tags from the user message

@@ -10,7 +10,7 @@ import (
 // Config struct for TOML configuration
 type Config struct {
 	Listen                      string   `toml:"Listen"`
-	TokenBufferReserve          int      `toml:"TokenBufferReserve"`
+	TokenBufferReserve          int64    `toml:"TokenBufferReserve"`
 	UserMessageTags             []string `toml:"UserMessageTags"`
 	UserMessageAttachmentTags   []string `toml:"UserMessageAttachmentTags"`
 	OllamaBase                  string   `toml:"OllamaBase"`
@@ -18,9 +18,9 @@ type Config struct {
 	OllamaUnloadBeforeEmbedding bool     `toml:"OllamaUnloadBeforeEmbedding"`
 	EmbeddingModel              string   `toml:"EmbeddingModel"`
 	EmbeddingsEndpoint          string   `toml:"EmbeddingsEndpoint"`
-	EmbeddingsModeWindowSize    int      `toml:"EmbeddingsModeWindowSize"`
+	EmbeddingsModeWindowSize    int64    `toml:"EmbeddingsModeWindowSize"`
 	MainModel                   string   `toml:"MainModel"`
-	MainModelWindowSize         int      `toml:"MainModelWindowSize"`
+	MainModelWindowSize         int64    `toml:"MainModelWindowSize"`
 	QdrantHost                  string   `toml:"QdrantHost"`
 	QdrantPort                  int      `toml:"QdrantPort"`
 	QdrantKeepAlive             int      `toml:"QdrantKeepAlive"`
@@ -28,9 +28,9 @@ type Config struct {
 	QdrantMetric                string   `toml:"QdrantMetric"`
 	QdrantVectorSize            int      `toml:"QdrantVectorSize"`
 	SearchSource                []string `toml:"SearchSource"`
-	SearchMaxAgeDays            int      `toml:"SearchMaxAgeDays"`
-	SearchTopK                  int      `toml:"SearchTopK"`
-	FeedAugmentationPercent     int      `toml:"FeedAugmentationPercent"`
+	SearchMaxAgeDays            int64    `toml:"SearchMaxAgeDays"`
+	SearchTopK                  int64    `toml:"SearchTopK"`
+	FeedAugmentationPercent     int64    `toml:"FeedAugmentationPercent"`
 	VerboseDiskLogs             bool     `toml:"VerboseDiskLogs"`
 }
 
@@ -54,10 +54,23 @@ type FileMeta struct {
 // Qdrant Payload structure
 type Payload struct {
 	PacketID   string   `json:"PacketID"`
-	Timestamp  int64    `json:"Timestamp"`
+	Timestamp  float64  `json:"Timestamp"`
 	Role       string   `json:"Role"`
 	Body       string   `json:"Body"`
-	TokenCount int      `json:"TokenCount"`
+	TokenCount int64    `json:"TokenCount"`
 	Hash       string   `json:"Hash"`
 	FileMeta   FileMeta `json:"FileMeta"`
+}
+
+// Attachment represents a file attachment
+type Attachment struct {
+	ID   string `json:"id"`
+	Body string `json:"body"`
+	Path string `json:"path"`
+	Hash string `json:"hash"`
+}
+
+type AttachmentReplacement struct {
+	Attachment Attachment
+	OldPointID string
 }

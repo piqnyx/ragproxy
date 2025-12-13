@@ -1,15 +1,21 @@
+// добавлю сюда текст
 package main
 
 var appConsts struct {
-	MessagesWrapperSize            int
+	MessagesWrapperSize            int64
 	AvailableMessageTags           []string
 	AvailableMessageAttachmentTags []string
 	AvailableSearchSources         []string
 	Base64FileTag                  string
 	Base64FilesTag                 string
+	UserMessageLeftWrapper         string
+	UserMessageRightWrapper        string
+	AssistantMessageLeftWrapper    string
+	AssistantMessageRightWrapper   string
 }
 
 func initConsts() {
+
 	appConsts.MessagesWrapperSize =
 		calculateTokensWithReserve(`"messages":[`) + calculateTokensWithReserve(`],`)
 	appConsts.AvailableMessageTags = []string{
@@ -25,5 +31,11 @@ func initConsts() {
 		"file",
 	}
 	appConsts.Base64FileTag = "YXR0YWNobWVudA=="
+
 	appConsts.Base64FilesTag = "YXR0YWNobWVudHM="
+
+	appConsts.UserMessageLeftWrapper = "{\"content\":\""
+	appConsts.UserMessageRightWrapper = "\",\"role\":\"user\"},"
+	appConsts.AssistantMessageLeftWrapper = "{\"content\":\""
+	appConsts.AssistantMessageRightWrapper = "\",\"role\":\"assistant\"},"
 }

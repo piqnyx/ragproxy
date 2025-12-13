@@ -6,7 +6,7 @@
 # Listen address for the proxy server
 Listen = "0.0.0.0:11434"
 # Token buffer reserve % (positive will add reserve, negative will reduce)
-TokenBufferReserve = 10
+TokenBufferReserve = 1
 # Tags used to parse clean user prompt
 UserMessageTags = ["userRequest", "prompt"]
 # Tags used to parse files and other attachments
@@ -21,7 +21,7 @@ UserMessageAttachmentTags = ["attachment"]
 # Ollama base URL
 OllamaBase = "http://127.0.0.1:11435"
 # Keep alive after message for Ollama
-OllamaKeepAlive = "0s"
+OllamaKeepAlive = "10s"
 OllamaUnloadBeforeEmbedding = true
 
 # Embedding model for vectorization
@@ -47,7 +47,7 @@ QdrantPort = 6334
 # Qdrant keep alive send packet every 10s
 QdrantKeepAlive = 10
 # Qdrant collection name
-QdrantCollection = "dialogs"
+QdrantCollection = "ragmem"
 
 # Vector metric (Cosine | Euclid | Dot)
 QdrantMetric = "Cosine"
@@ -63,9 +63,9 @@ QdrantVectorSize = 4096
 # Select where to search. Available value: user,assistant,file
 SearchSource = ["user", "assistant", "file"]
 # Trim by time window. Last X days of memory (-1 from the begining of the world)
-SearchMaxAgeDays = 14
+SearchMaxAgeDays = -1
 # Limit Top K results (-1 to the moon and back)
-SearchTopK = 100
+SearchTopK = 5
 
 
 ##################################################
@@ -74,7 +74,7 @@ SearchTopK = 100
 
 
 # User prompt will be feeded with some of found contexts. How much space of full model context to feed in %? (minimal 1)
-FeedAugmentationPercent = 25
+FeedAugmentationPercent = 15
 
 
 ##################################################

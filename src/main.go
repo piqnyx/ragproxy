@@ -118,7 +118,9 @@ func runApp() error {
 	// Handle incoming requests
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		var requestBody string
-
+		var cleanUserContent string
+		var attachments []Attachment
+		var promptVector []float32
 		// Read and log request body
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -127,7 +129,7 @@ func runApp() error {
 			}
 		} else {
 			requestBody = string(bodyBytes)
-			requestBody = processInbound(requestBody)
+			requestBody, cleanUserContent, attachments, promptVector = processInbound(requestBody)
 			r.Body = io.NopCloser(bytes.NewReader([]byte(requestBody))) // Restore body
 			r.ContentLength = int64(len(requestBody))
 			r.Header.Set("Content-Type", "application/json")
@@ -141,31 +143,21 @@ func runApp() error {
 			appCtx.AccessLogger.Printf("Received request: %s %s", r.Method, r.URL)
 		}
 
-		// Capture response if verbose
-		var capture *responseCapture
-		if appCtx.Config.VerboseDiskLogs {
-			capture = &responseCapture{
-				ResponseWriter: w,
-				body:           &bytes.Buffer{},
-			}
-			w = capture
-		}
-		dump, _ := httputil.DumpRequest(r, true)
+		// Using StreamCollectorWriter to capture streaming response
+		collector := &StreamCollectorWriter{ResponseWriter: w}
 
+		// Log full request if verbose
 		if appCtx.Config.VerboseDiskLogs {
+			dump, _ := httputil.DumpRequest(r, true)
 			appCtx.AccessLogger.Printf("Full HTTP request to Ollama:\n%s", dump)
 		}
 
-		outbound.ServeHTTP(w, r)
+		// Proxy the request to Ollama
+		outbound.ServeHTTP(collector, r)
 
-		// Log response if verbose
-		if appCtx.Config.VerboseDiskLogs && capture != nil {
-			responseBody := processOutbound(capture.body.String())
-			appCtx.AccessLogger.Printf("Response status: %d\nBody: %s", capture.status, responseBody)
-		} else {
-			// For non-verbose, log a brief response note (e.g., assume 200 if no error)
-			appCtx.AccessLogger.Printf("Response sent")
-		}
+		// After the stream is complete, collect and process the response for the database
+		collector.CloseAndProcess(cleanUserContent, attachments, promptVector)
+
 	})
 
 	// Create inbound

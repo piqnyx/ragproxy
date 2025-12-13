@@ -1,7 +1,7 @@
 package main
 
 // Calculates token count with reserve percentage
-func calculateTokensWithReserve(text string) int {
+func calculateTokensWithReserve(text string) int64 {
 	if appCtx.Tokenizer == nil {
 		panic("Tokenizer is not initialized")
 	}
@@ -12,5 +12,5 @@ func calculateTokensWithReserve(text string) int {
 	if adjustedCount < 0 {
 		adjustedCount = 0
 	}
-	return int(adjustedCount)
+	return int64(adjustedCount)
 }
