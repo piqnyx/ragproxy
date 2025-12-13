@@ -11,6 +11,7 @@ TokenBufferReserve = 1
 UserMessageTags = ["userRequest", "prompt"]
 # Tags used to parse files and other attachments
 UserMessageAttachmentTags = ["attachment"]
+Temperature = 0.7
 
 
 ##################################################

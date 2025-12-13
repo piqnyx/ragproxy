@@ -208,6 +208,9 @@ func processInbound(data string) (responseBody string, cleanUserContent string, 
 		return data, "", nil, nil
 	}
 
+	// Change temperature
+	req["temperature"] = appCtx.Config.Temperature
+
 	// Marhall and return modified request (currently unchanged)
 	modifiedData, err := json.Marshal(req)
 	if err != nil {
@@ -274,7 +277,7 @@ func calcFileSize(att Attachment) (tokenCount int64, err error) {
 // Attachment represents a user message attachment
 func storeAttachments(attachments []Attachment, packetID string) error {
 
-	appCtx.DebugLogger.Printf("Storing %d attachments for packet ID: %s: %v", len(attachments), packetID, attachments)
+	// appCtx.DebugLogger.Printf("Storing %d attachments for packet ID: %s: %v", len(attachments), packetID, attachments)
 
 	toInsert, toReplace, err := planAttachmentSync(attachments)
 	if err != nil {
@@ -282,8 +285,8 @@ func storeAttachments(attachments []Attachment, packetID string) error {
 	}
 
 	if appCtx.Config.VerboseDiskLogs {
-		appCtx.DebugLogger.Printf("Attachments to replace: %v", toReplace)
-		appCtx.DebugLogger.Printf("Attachments to insert: %v", toInsert)
+		appCtx.AccessLogger.Printf("Attachments to replace: %v", toReplace)
+		appCtx.AccessLogger.Printf("Attachments to insert: %v", toInsert)
 	}
 
 	proc := func(listAttachments []AttachmentReplacement) error {
@@ -291,10 +294,10 @@ func storeAttachments(attachments []Attachment, packetID string) error {
 		var pointID string
 		for _, att := range listAttachments {
 
-			replace = att.OldPointID == "-"
+			replace = len(att.OldPointID) > 1
 
 			if appCtx.Config.VerboseDiskLogs {
-				appCtx.DebugLogger.Printf("Storing attachment ID: %s\nBody length: %d\nBody: %s", att.Attachment.ID, len(att.Attachment.Body), att.Attachment.Body)
+				appCtx.AccessLogger.Printf("Storing attachment ID: %s\nBody length: %d\nBody: %s", att.Attachment.ID, len(att.Attachment.Body), att.Attachment.Body)
 			}
 
 			attachmentVector, err := embedText(att.Attachment.Body)
@@ -308,7 +311,11 @@ func storeAttachments(attachments []Attachment, packetID string) error {
 			}
 
 			if appCtx.Config.VerboseDiskLogs {
-				appCtx.DebugLogger.Printf("Attachment ID %s token count: %d", att.Attachment.ID, tokenCount)
+				if replace {
+					appCtx.DebugLogger.Printf("Replacing attachment ID %s old point ID: %s", att.Attachment.ID, att.OldPointID)
+				} else {
+					appCtx.DebugLogger.Printf("Inserting attachment ID %s token count: %d", att.Attachment.ID, tokenCount)
+				}
 			}
 
 			if replace {
@@ -330,7 +337,7 @@ func storeAttachments(attachments []Attachment, packetID string) error {
 
 	if len(toReplace) > 0 {
 		if appCtx.Config.VerboseDiskLogs {
-			appCtx.DebugLogger.Printf("Processing %d attachments for replacement", len(toReplace))
+			appCtx.AccessLogger.Printf("Processing %d attachments for replacement", len(toReplace))
 		}
 		if err := proc(toReplace); err != nil {
 			return fmt.Errorf("error processing attachments for replacement: %w", err)
@@ -339,7 +346,7 @@ func storeAttachments(attachments []Attachment, packetID string) error {
 
 	if len(toInsert) > 0 {
 		if appCtx.Config.VerboseDiskLogs {
-			appCtx.DebugLogger.Printf("Processing %d attachments for insertion", len(toInsert))
+			appCtx.AccessLogger.Printf("Processing %d attachments for insertion", len(toInsert))
 		}
 		if err := proc(toInsert); err != nil {
 			return fmt.Errorf("error processing attachments for insertion: %w", err)
@@ -347,7 +354,7 @@ func storeAttachments(attachments []Attachment, packetID string) error {
 	}
 
 	if appCtx.Config.VerboseDiskLogs {
-		appCtx.DebugLogger.Printf("All attachments processed successfully.")
+		appCtx.DebugLogger.Printf("All attachments processed successfully.---------------------------------")
 	}
 
 	return nil

@@ -13,6 +13,7 @@ type Config struct {
 	TokenBufferReserve          int64    `toml:"TokenBufferReserve"`
 	UserMessageTags             []string `toml:"UserMessageTags"`
 	UserMessageAttachmentTags   []string `toml:"UserMessageAttachmentTags"`
+	Temperature                 float64  `toml:"Temperature"`
 	OllamaBase                  string   `toml:"OllamaBase"`
 	OllamaKeepAlive             string   `toml:"OllamaKeepAlive"`
 	OllamaUnloadBeforeEmbedding bool     `toml:"OllamaUnloadBeforeEmbedding"`

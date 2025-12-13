@@ -49,6 +49,11 @@ func validateConfig(config Config) error {
 		return fmt.Errorf("`UserMessageAttachmentTags` is invalid: %v", err)
 	}
 
+	// Temperature: 0.0 - 1.0
+	if config.Temperature < 0.0 || config.Temperature > 1.0 {
+		return fmt.Errorf("`Temperature` is invalid: %f", config.Temperature)
+	}
+
 	// OllamaBase: http(s)://host:port
 	ollamaBaseRe := regexp.MustCompile(`^https?://[\w\.\-]+(:\d+)?$`)
 	if !ollamaBaseRe.MatchString(config.OllamaBase) {
