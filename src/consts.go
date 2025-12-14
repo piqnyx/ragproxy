@@ -1,17 +1,17 @@
-// добавлю сюда текст
 package main
 
 var appConsts struct {
-	MessagesWrapperSize            int64
-	AvailableMessageTags           []string
-	AvailableMessageAttachmentTags []string
-	AvailableSearchSources         []string
-	Base64FileTag                  string
-	Base64FilesTag                 string
-	UserMessageLeftWrapper         string
-	UserMessageRightWrapper        string
-	AssistantMessageLeftWrapper    string
-	AssistantMessageRightWrapper   string
+	MessagesWrapperSize                 int64
+	AvailableMessageTags                []string
+	AvailableMessageAskAttachmentTags   []string
+	AvailableMessageAgentAttachmentTags []string
+	AvailableSearchSources              []string
+	Base64FileTag                       string
+	Base64FilesTag                      string
+	UserMessageLeftWrapper              string
+	UserMessageRightWrapper             string
+	AssistantMessageLeftWrapper         string
+	AssistantMessageRightWrapper        string
 }
 
 func initConsts() {
@@ -22,8 +22,11 @@ func initConsts() {
 		"userRequest",
 		"prompt",
 	}
-	appConsts.AvailableMessageAttachmentTags = []string{
+	appConsts.AvailableMessageAskAttachmentTags = []string{
 		"attachment",
+	}
+	appConsts.AvailableMessageAgentAttachmentTags = []string{
+		"editorContext",
 	}
 	appConsts.AvailableSearchSources = []string{
 		"user",

@@ -83,6 +83,14 @@ func initApp(configPath string) error {
 	}
 	appCtx.JournaldLogger.Printf("Configuration validated successfully")
 
+	err = initTokenCache()
+	if err != nil {
+		appCtx.ErrorLogger.Printf("Error initializing token cache: %v", err)
+		appCtx.JournaldLogger.Printf("Error initializing token cache: %v", err)
+		return err
+	}
+	appCtx.JournaldLogger.Printf("Token cache initialized successfully. Capacity: %d", appCtx.Config.TokensCacheSize)
+
 	// Application initialization log
 	appCtx.JournaldLogger.Printf("Application context initialized")
 
@@ -96,6 +104,24 @@ func initApp(configPath string) error {
 		return err
 	}
 
+	// Check embedding normalization
+	if err := CheckEmbeddingNormalization(); err != nil {
+		appCtx.ErrorLogger.Printf("Embedding normalization check failed: %v", err)
+		appCtx.JournaldLogger.Printf("Embedding normalization check failed: %v", err)
+		return err
+	}
+
+	// Load IDF store from file
+	err = loadIDF()
+	if err != nil {
+		appCtx.ErrorLogger.Printf("Error loading IDF store: %v", err)
+		appCtx.JournaldLogger.Printf("Error loading IDF store: %v", err)
+		return err
+	}
+	appCtx.JournaldLogger.Printf("IDF store loaded successfully")
+
+	// Application fully initialized
+	appCtx.JournaldLogger.Printf("Application initialized successfully")
 	return nil
 }
 
@@ -196,6 +222,26 @@ func runApp() error {
 
 // shutdownApp handles application shutdown: closes connections, logs
 func shutdownApp() {
+	// Close database connection if open
+	if appCtx.DB != nil {
+		err := appCtx.DB.Close()
+		if err != nil {
+			appCtx.ErrorLogger.Printf("Error closing database connection: %v", err)
+		} else {
+			appCtx.JournaldLogger.Printf("Database connection closed successfully")
+		}
+	}
+
+	// Store IDF store to file
+	err := saveIDF()
+	if err != nil {
+		appCtx.ErrorLogger.Printf("Error storing IDF store: %v", err)
+		appCtx.JournaldLogger.Printf("Error storing IDF store: %v", err)
+	} else {
+		appCtx.JournaldLogger.Printf("IDF store saved successfully")
+	}
+
+	// Log shutdown completion
 	appCtx.JournaldLogger.Printf("Ragproxy stopped")
 }
 

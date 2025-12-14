@@ -110,9 +110,10 @@ func embedText(text string) (vector []float32, err error) {
 		return vector, nil
 	}
 
-	// If embedding failed and unload before embedding is enabled, try unloading main model and retry
-	if appCtx.Config.OllamaUnloadBeforeEmbedding {
-		appCtx.AccessLogger.Printf("Embedding failed, trying to unload main model and retry: %v", err)
+	// If embedding failed and unload before embedding is enabled, try unloading main model and reranking model and retry
+	if appCtx.Config.OllamaUnloadOnLoVRAM {
+		appCtx.AccessLogger.Printf("Embedding failed, trying to unload main model and reranking model and retry: %v", err)
+		appCtx.DebugLogger.Printf("UNLOADING!!!!========================================")
 		exec.Command("ollama", "stop", appCtx.Config.MainModel).Run()
 
 		// Wait a moment for the model to unload
@@ -126,6 +127,6 @@ func embedText(text string) (vector []float32, err error) {
 		return nil, err
 	}
 
-	appCtx.ErrorLogger.Printf("Initial embedding attempt failed, OllamaUnloadBeforeEmbedding is false: %v", err)
+	appCtx.ErrorLogger.Printf("Initial embedding attempt failed, OllamaUnloadOnLoVRAM is false: %v", err)
 	return nil, err
 }

@@ -2,31 +2,59 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path"
 	"regexp"
 	"strings"
 )
 
-// parseAttachments scans the provided content for any of the tags listed in `tags` (comma-separated).
-// For each found tag it:
-//   - looks for a line "// filepath: /path/to/file" inside the tag body and extracts the file path,
-//   - derives ID from the basename of that path (if no basename -> skip),
-//   - removes only the first occurrence of the filepath line from the body,
-//   - removes lines like "User's active file..." (common header lines),
-//   - trims outer empty lines and returns Attachment{ID, Body}.
-//
-// If the body contains "User's active selection" (case-insensitive) the block is skipped.
+// normalizePath normalizes and sanitizes a candidate file path for comparison.
+func normalizePath(p string) string {
+	p = strings.TrimSpace(p)
+	p = strings.Trim(p, `"'`)
+	p = strings.TrimRight(p, ".;, \t\r\n")
+	return p
+}
+
+// isDuplicate checks if a given path already exists in the list of attachments.
+func isDuplicate(attachments []Attachment, pathToCheck string) bool {
+	norm := normalizePath(pathToCheck)
+	for _, a := range attachments {
+		if normalizePath(a.Path) == norm {
+			return true
+		}
+	}
+	return false
+}
+
+// isFileAllowed checks if a file path matches the configured allowed patterns.
+func isFileAllowed(filePath string) bool {
+	// quick allow when no patterns configured
+	if len(appCtx.Config.FilePatternsReg) == 0 {
+		return true
+	}
+
+	for _, r := range appCtx.Config.FilePatternsReg {
+		if r == nil {
+			continue
+		}
+		if r.MatchString(filePath) {
+			return true
+		}
+	}
+
+	// ни один паттерн не совпал — запрещаем
+	if appCtx.Config.VerboseDiskLogs {
+		appCtx.ErrorLogger.Printf("file disallowed by patterns: %q", filePath)
+	}
+	return false
+}
+
+// parseAttachments scans content for tag blocks and extracts attachments.
 func parseAttachments(content string, tagList []string) (attachments []Attachment) {
-
-	// regex to find a filepath line like: // filepath: /home/piqnyx/...
-	fpLineRe := regexp.MustCompile(`(?im)^[ \t]*//[ \t]*filepath:[ \t]*(.+)$`)
-
-	// regex to remove lines like "User's active file:" or
-	// "User's active file for additional context:" (case-insensitive)
+	fpLineRe := regexp.MustCompile(`(?i)^[ \t]*//[ \t]*filepath:[ \t]*(.+)$`)
 	userFileRemoveRe := regexp.MustCompile(`(?im)^[ \t]*user(?:'s)?[ \t]+active[ \t]+file(?:[ \t]+for[ \t]+additional[ \t]+context)?:[ \t]*$`)
-
-	// if this phrase appears anywhere in the body, skip the whole block
-	skipSelectionRe := regexp.MustCompile(`(?i)users?\s*'?s?\s*active\s*selection`)
+	attrFilePathRe := regexp.MustCompile(`(?i)\bfilepath\s*=\s*"([^"]+)"`)
 
 	for _, rawTag := range tagList {
 		tag := strings.TrimSpace(rawTag)
@@ -34,12 +62,101 @@ func parseAttachments(content string, tagList []string) (attachments []Attachmen
 			continue
 		}
 
-		// pattern matches opening tag (with attributes) and captures its attributes and inner content.
-		// supports literal '<' and escaped forms like \u003c / \\u003c
-		pattern := `(?is)(?:<|\\u003c|\\\\u003c)` + regexp.QuoteMeta(tag) +
-			`\b([^>]*?)(?:>|\\u003e|\\\\u003e)(.*?)` +
-			`(?:<|\\u003c|\\\\u003c)(?:/|\\u002f|\\\\u002f)` + regexp.QuoteMeta(tag) + `(?:>|\\u003e|\\\\u003e)`
+		pattern := `(?is)<` + regexp.QuoteMeta(tag) + `\b([^>]*)>(.*?)</` + regexp.QuoteMeta(tag) + `>`
+		re := regexp.MustCompile(pattern)
+		matches := re.FindAllStringSubmatch(content, -1)
 
+		for _, m := range matches {
+			attrStr := ""
+			bodyRaw := ""
+			if len(m) > 1 {
+				attrStr = m[1]
+			}
+			if len(m) > 2 {
+				bodyRaw = m[2]
+			}
+
+			if regexp.MustCompile(`(?i)users?\s*'?s?\s*active\s*selection`).MatchString(bodyRaw) {
+				continue
+			}
+
+			filePath := ""
+			matchedLine := ""
+
+			const maxLinesToCheck = 6
+			lines := strings.SplitN(bodyRaw, "\n", maxLinesToCheck+1)
+			for _, ln := range lines {
+				if fpMatch := fpLineRe.FindStringSubmatch(ln); len(fpMatch) > 1 {
+					filePath = strings.TrimSpace(fpMatch[1])
+					matchedLine = fpMatch[0]
+					break
+				}
+			}
+
+			if filePath == "" {
+				if attrMatch := attrFilePathRe.FindStringSubmatch(attrStr); len(attrMatch) > 1 {
+					candidate := strings.TrimSpace(attrMatch[1])
+					if candidate != "" && !strings.Contains(candidate, "%s") && !strings.Contains(candidate, "regexp.MustCompile") {
+						filePath = candidate
+					}
+				}
+			}
+
+			if filePath == "" {
+				continue
+			}
+
+			filePath = normalizePath(filePath)
+			id := path.Base(filePath)
+			if id == "" || id == "." || id == "/" {
+				continue
+			}
+			if isDuplicate(attachments, filePath) {
+				continue
+			}
+
+			bodyAfter := bodyRaw
+			if matchedLine != "" {
+				bodyAfter = strings.Replace(bodyAfter, matchedLine, "", 1)
+			}
+
+			bodyAfter = userFileRemoveRe.ReplaceAllString(bodyAfter, "")
+			bodyAfter = strings.Trim(bodyAfter, "\r\n")
+
+			if len(bodyAfter) == 0 {
+				continue
+			}
+
+			if appCtx.Config.MaxFileSize > 0 && len(bodyAfter) > appCtx.Config.MaxFileSize {
+				continue
+			}
+
+			if !isFileAllowed(filePath) {
+				continue
+			}
+
+			attachments = append(attachments, Attachment{
+				ID:   id,
+				Body: bodyAfter,
+				Path: filePath,
+				Hash: sha512sum(bodyAfter),
+			})
+
+		}
+	}
+
+	return attachments
+}
+
+// readAttachments scans editor-like blocks
+func readAttachments(existing []Attachment, content string, tagList []string) []Attachment {
+	for _, rawTag := range tagList {
+		tag := strings.TrimSpace(rawTag)
+		if tag == "" {
+			continue
+		}
+
+		pattern := `(?is)<` + regexp.QuoteMeta(tag) + `\b([^>]*)>(.*?)</` + regexp.QuoteMeta(tag) + `>`
 		re := regexp.MustCompile(pattern)
 		matches := re.FindAllStringSubmatch(content, -1)
 
@@ -49,54 +166,55 @@ func parseAttachments(content string, tagList []string) (attachments []Attachmen
 				bodyRaw = m[2]
 			}
 
-			// If the body contains "User's active selection" — skip this block entirely.
-			if skipSelectionRe.MatchString(bodyRaw) {
-				continue
+			editorPathRe := regexp.MustCompile(`(?im)current file is[:\s]+(.+?)(?:\r?\n|<|$)`)
+			if epMatch := editorPathRe.FindStringSubmatch(bodyRaw); len(epMatch) > 1 {
+				filePath := strings.TrimSpace(epMatch[1])
+				filePath = strings.Trim(filePath, `"'`)
+				filePath = normalizePath(filePath)
+				if filePath == "" {
+					continue
+				}
+
+				id := path.Base(filePath)
+				if id == "" || id == "." || id == "/" {
+					continue
+				}
+
+				if isDuplicate(existing, filePath) {
+					continue
+				}
+
+				data, err := os.ReadFile(filePath)
+				if err != nil {
+					continue
+				}
+
+				body := strings.Trim(string(data), "\r\n")
+
+				if len(body) == 0 {
+					continue
+				}
+
+				if appCtx.Config.MaxFileSize > 0 && len(body) > appCtx.Config.MaxFileSize {
+					continue
+				}
+
+				if !isFileAllowed(filePath) {
+					continue
+				}
+
+				newAtt := Attachment{
+					ID:   id,
+					Body: body,
+					Path: filePath,
+					Hash: sha512sum(body),
+				}
+				existing = append(existing, newAtt)
 			}
-
-			// Find the first filepath line in the body (if any)
-			filePath := ""
-			if fpMatch := fpLineRe.FindStringSubmatch(bodyRaw); len(fpMatch) > 1 {
-				filePath = strings.TrimSpace(fpMatch[1])
-			}
-
-			// If no filepath found — skip this block
-			if filePath == "" {
-				continue
-			}
-
-			// Derive ID from basename of the filepath
-			id := ""
-			base := path.Base(filePath)
-			if base != "" && base != "." && base != "/" {
-				id = base
-			}
-			if id == "" {
-				continue
-			}
-
-			// Remove only the first occurrence of the filepath line from the body
-			bodyAfter := bodyRaw
-			if loc := fpLineRe.FindStringIndex(bodyRaw); len(loc) == 2 {
-				bodyAfter = bodyRaw[:loc[0]] + bodyRaw[loc[1]:]
-			}
-
-			// Remove any "User's active file..." header lines anywhere in the body
-			bodyAfter = userFileRemoveRe.ReplaceAllString(bodyAfter, "")
-
-			// Trim outer empty lines but preserve internal newlines
-			bodyAfter = strings.Trim(bodyAfter, "\r\n")
-
-			attachments = append(attachments, Attachment{
-				ID:   id,
-				Body: bodyAfter,
-				Path: filePath,
-				Hash: sha512sum(bodyAfter),
-			})
 		}
 	}
 
-	return attachments
+	return existing
 }
 
 // extractByTags extracts content within specified tags from the user message
@@ -108,15 +226,6 @@ func extractByTags(content string, tagsList []string) []string {
 		if tag == "" {
 			continue
 		}
-
-		// Паттерн:
-		// (?is)                       — i: case-insensitive, s: dot matches newline
-		// (?:<|\\u003c)               — открывающая скобка или её unicode-форма
-		// tag\b                       — имя тега с границей слова
-		// (?:\s+[^>]*?)?              — необязательные атрибуты (нежадно)
-		// (?:>|\\u003e)               — закрывающая скобка открывающего тега или её unicode-форма
-		// (.*?)                       — захватываемое содержимое (лениво, включает переводы строк)
-		// (?:<|\\u003c)(?:/|\\u002f)tag(?:>|\\u003e) — закрывающий тег (поддержка unicode-форм)
 		pattern := `(?is)(?:<|\\u003c)` + regexp.QuoteMeta(tag) +
 			`\b(?:\s+[^>]*?)?(?:>|\\u003e)(.*?)(?:<|\\u003c)(?:/|\\u002f)` +
 			regexp.QuoteMeta(tag) + `(?:>|\\u003e)`
@@ -125,7 +234,6 @@ func extractByTags(content string, tagsList []string) []string {
 		matches := re.FindAllStringSubmatch(content, -1)
 
 		for _, m := range matches {
-			// m[0] = полный матч, m[1] = содержимое между тегами
 			if len(m) > 1 {
 				results = append(results, strings.TrimSpace(m[1]))
 			}
@@ -148,8 +256,6 @@ func processMessages(req map[string]any) (cleanUserContent string, attachments [
 		err = fmt.Errorf("messages field invalid type or empty")
 		return
 	}
-
-	// Find messages
 	lastMsg, ok := msgs[len(msgs)-1].(map[string]any)
 	if !ok {
 		err = fmt.Errorf("last message invalid format")
@@ -163,7 +269,9 @@ func processMessages(req map[string]any) (cleanUserContent string, attachments [
 			}
 			cleanUserContentParts := extractByTags(content, appCtx.Config.UserMessageTags)
 			cleanUserContent = strings.Join(cleanUserContentParts, " ")
-			attachments = parseAttachments(content, appCtx.Config.UserMessageAttachmentTags)
+			attachments = parseAttachments(content, appCtx.Config.UserMessageAskAttachmentTags)
+			attachments = readAttachments(attachments, content, appCtx.Config.UserMessageAgentAttachmentTags)
+			appCtx.AccessLogger.Printf("Extracted %d attachments from user message", len(attachments))
 		}
 	}
 

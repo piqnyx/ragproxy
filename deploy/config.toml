@@ -5,13 +5,20 @@
 
 # Listen address for the proxy server
 Listen = "0.0.0.0:11434"
+IDFFile = "/home/piqnyx/.local/bin/ragproxy/deploy/idf.json"
 # Token buffer reserve % (positive will add reserve, negative will reduce)
 TokenBufferReserve = 1
 # Tags used to parse clean user prompt
 UserMessageTags = ["userRequest", "prompt"]
 # Tags used to parse files and other attachments
-UserMessageAttachmentTags = ["attachment"]
-Temperature = 0.7
+UserMessageAskAttachmentTags = [
+    "attachment"
+]
+UserMessageAgentAttachmentTags = [
+    "editorContext"
+]
+# Lower is more precise
+Temperature = 0.5
 
 
 ##################################################
@@ -23,7 +30,7 @@ Temperature = 0.7
 OllamaBase = "http://127.0.0.1:11435"
 # Keep alive after message for Ollama
 OllamaKeepAlive = "10s"
-OllamaUnloadBeforeEmbedding = true
+OllamaUnloadOnLoVRAM = true
 
 # Embedding model for vectorization
 EmbeddingModel = "qwen3-embedding:8b-q8_0"
@@ -57,17 +64,68 @@ QdrantVectorSize = 4096
 
 
 ##################################################
-# >> Search
+# >> Storing
+##################################################
+
+# Maximal size of file to store in DB (-1 unlimited)
+MaxFileSize = 524288
+# Extensions of files to store
+FilePatterns = [
+  '(?i)^(?:.*[\\/])?.*\.(?:go|sum|mod|cpp|c|h|hpp|md|toml)$',
+  '(?i)^(?:.*[\\/])?(?:CMakeLists\.txt|CMakePresets\.txt)$'
+]
+
+
+##################################################
+# >> Search for feeding
 ##################################################
 
 
+# >>> First Step
+
 # Select where to search. Available value: user,assistant,file
-SearchSource = ["user", "assistant", "file"]
+SearchSource = [
+    "user", 
+    "assistant", 
+    "file"
+]
 # Trim by time window. Last X days of memory (-1 from the begining of the world)
 SearchMaxAgeDays = -1
-# Limit Top K results (-1 to the moon and back)
-SearchTopK = 5
+# Limit Top K results (not 0, -1 is nolimit)
+SearchTopK = 50
+CosineMinScore = 0.5
+EuclidMaxDistance = 0.8
 
+# >>> Second Step
+
+# Must be equal or lower than SearchTopK (not 0, -1 is nolimit)
+RerankTopN = 30
+MinRankScore = 0.35
+# 75% of MainModelWindowSize
+MaxQueryTokens = 196608 
+TokensCacheTTL = "30m"
+TokensCacheSize = 50000
+TauDays = 365.0
+MaxTokensNormalization = 196608
+MinTokensNormalization = 512
+DefaultWeights = [
+    # Light features
+    0.45, # EmbSim
+    0.10, # Recency
+    0.07, # RoleScore
+    0.03, # BodyLen
+    # Heavy features
+    0.02, # PayloadQuality
+    0.12, # KeywordOverlap
+    0.08, # WeightedOverlap
+    0.05, # BM25
+    0.02, # NgramOverlap
+    0.01  # WeightedNgram
+]
+ReturnVectors = true
+BM25K1 = 1.5 
+BM25B = 0.75
+RoleWeights = { user = 1.0, file = 0.8, assistant = 0.6 }
 
 ##################################################
 # >> Feed
@@ -75,7 +133,7 @@ SearchTopK = 5
 
 
 # User prompt will be feeded with some of found contexts. How much space of full model context to feed in %? (minimal 1)
-FeedAugmentationPercent = 15
+FeedAugmentationPercent = 25
 
 
 ##################################################
@@ -85,4 +143,3 @@ FeedAugmentationPercent = 15
 
 # Verbose disk logs
 VerboseDiskLogs = true
-

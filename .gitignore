@@ -10,3 +10,4 @@ test.json
 build
 CMakePresets.json
 notes.md
+deploy/idf.json
