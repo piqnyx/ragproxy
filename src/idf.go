@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"math"
 	"os"
-	"time"
 )
 
 // SaveIDF writes the IDFStore to a file in JSON format.
@@ -153,18 +152,4 @@ func removeDocumentFromIDF(body string, hash string) error {
 	removeFromTokenCache(hash)
 
 	return nil
-}
-
-// periodicSaveIDF periodically saves the IDF store to file every 5 minutes
-func periodicSaveIDF() {
-	ticker := time.NewTicker(5 * time.Minute)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		if err := saveIDF(); err != nil {
-			appCtx.ErrorLogger.Printf("Failed to save IDF: %v", err)
-		} else {
-			appCtx.AccessLogger.Printf("IDF successfully saved to file")
-		}
-	}
 }

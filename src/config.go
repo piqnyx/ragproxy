@@ -260,7 +260,7 @@ func validateConfig(config Config) error {
 
 	// MaxTokensNormalization: positive integer
 	if config.MaxTokensNormalization <= 0 {
-		return fmt.Errorf("`MaxTokensNormalization` is invalid: %f", config.MaxTokensNormalization)
+		return fmt.Errorf("`MaxTokensNormalization` is invalid: %d", config.MaxTokensNormalization)
 	}
 
 	// MinTokensNormalization: positive integer
