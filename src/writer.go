@@ -56,7 +56,7 @@ func (w *StreamCollectorWriter) Write(data []byte) (int, error) {
 	return w.ResponseWriter.Write(data)
 }
 
-func (w *StreamCollectorWriter) CloseAndProcess(cleanUserContent string, attachments []Attachment, promptVector []float32) {
+func (w *StreamCollectorWriter) CloseAndProcess(cleanUserContent string, attachments []Attachment, promptVector []float32, queryHash string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.closed {
@@ -88,6 +88,6 @@ func (w *StreamCollectorWriter) CloseAndProcess(cleanUserContent string, attachm
 		}
 	}
 	if result.Len() > 0 {
-		processOutbound(result.String(), cleanUserContent, attachments, promptVector)
+		processOutbound(result.String(), cleanUserContent, attachments, promptVector, queryHash)
 	}
 }

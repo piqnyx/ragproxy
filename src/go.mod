@@ -3,6 +3,7 @@ module ragproxy
 go 1.24.9
 
 require (
+	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/golang-lru v1.0.2
 	github.com/pelletier/go-toml/v2 v2.2.4

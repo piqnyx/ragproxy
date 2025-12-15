@@ -90,17 +90,25 @@ type AppContext struct {
 
 // IDFStore structure for IDF data
 type IDFStore struct {
-	DF       map[int]int     // document frequency counters
-	N        int             // total number of documents
-	IDF      map[int]float64 // cached weights
-	NgramDF  map[string]int
-	NgramIDF map[string]float64
+	DF          map[int]int     // document frequency counters
+	N           int             // total number of documents
+	IDF         map[int]float64 // cached weights
+	NgramDF     map[string]int
+	NgramIDF    map[string]float64
+	TotalTokens int64
 }
 
 // Qdrant FileMeta structure
 type FileMeta struct {
 	ID   string `json:"ID"`
 	Path string `json:"Path"`
+}
+
+// cachedEntry structure for token caching
+type cachedEntry struct {
+	IDs     []int
+	Strs    []string
+	created time.Time
 }
 
 // Qdrant Payload structure
@@ -112,13 +120,6 @@ type Payload struct {
 	TokenCount int64    `json:"TokenCount"`
 	Hash       string   `json:"Hash"`
 	FileMeta   FileMeta `json:"FileMeta"`
-}
-
-// cachedEntry structure for token caching
-type cachedEntry struct {
-	IDs     []int
-	Strs    []string
-	created time.Time
 }
 
 // Features structure for candidate scoring
@@ -154,7 +155,8 @@ type Attachment struct {
 }
 
 type AttachmentReplacement struct {
-	Attachment Attachment
-	OldPointID string
-	OldHash    string
+	Attachment    Attachment
+	OldPointID    string
+	OldHash       string
+	OldTokenCount int64
 }

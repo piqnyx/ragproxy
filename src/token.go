@@ -42,31 +42,8 @@ func tokenIDs(text string) ([]int, error) {
 	return ids, nil
 }
 
-// getCachedQueryTokenIDs: returns token IDs for query string with caching.
-func getCachedQueryTokenIDs(query string) ([]int, error) {
-	key := "q:" + query
-	if v, ok := appCtx.TokenCache.Get(key); ok {
-		if e, ok := v.(*cachedEntry); ok {
-			ttl := appCtx.Config.TokensCacheTTL.Duration
-			if ttl == 0 || time.Since(e.created) < ttl {
-				return e.IDs, nil
-			}
-			// expired -> remove
-			appCtx.TokenCache.Remove(key)
-		}
-	}
-
-	ids, err := tokenIDs(query)
-	if err != nil {
-		return nil, err
-	}
-	entry := &cachedEntry{IDs: ids, created: time.Now()}
-	appCtx.TokenCache.Add(key, entry)
-	return ids, nil
-}
-
-// getCachedBodyTokenIDs: returns token IDs for payload.Body with caching.
-func getCachedBodyTokenIDs(hash, body string) ([]int, error) {
+// getCachedTokenIDs: returns token IDs for payload.Body with caching.
+func getCachedTokenIDs(hash, body string) ([]int, error) {
 	if hash != "" {
 		if v, ok := appCtx.TokenCache.Get(hash); ok {
 			if e, ok := v.(*cachedEntry); ok {

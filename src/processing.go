@@ -16,17 +16,17 @@ func decodeTag(b64 string) string {
 }
 
 // feedPrompt processes the parsed request elements (placeholder for RAG logic)
-func feedPrompt(cleanUserContent string, req map[string]any) (changed bool, promptVector []float32, err error) {
+func feedPrompt(cleanUserContent string, req map[string]any) (changed bool, promptVector []float32, queryHash string, err error) {
 
 	feedSize, historySize, systemMsg, userPromptMsg, err := calcSizes(req)
 	if err != nil {
-		return false, nil, err
+		return false, nil, "", err
 	}
 	appCtx.AccessLogger.Printf("System message: %t, User prompt message: %t", systemMsg != nil, userPromptMsg != nil)
 
 	promptVector, err = embedText(cleanUserContent)
 	if err != nil {
-		return false, nil, err
+		return false, nil, "", err
 	}
 
 	if appCtx.Config.VerboseDiskLogs {
@@ -34,10 +34,10 @@ func feedPrompt(cleanUserContent string, req map[string]any) (changed bool, prom
 	} else {
 		appCtx.AccessLogger.Printf("Prompt vector generated. Length: %d", len(promptVector))
 	}
-
-	relevantContent, err := SearchRelevantContentWithRerank(promptVector, cleanUserContent)
+	queryHash = sha512sum(cleanUserContent)
+	relevantContent, err := SearchRelevantContentWithRerank(promptVector, cleanUserContent, queryHash)
 	if err != nil {
-		return false, nil, err
+		return false, nil, queryHash, err
 	}
 
 	var feeds []map[string]any
@@ -126,12 +126,12 @@ func feedPrompt(cleanUserContent string, req map[string]any) (changed bool, prom
 	for i := startIdx; i >= endIdx; i-- {
 		msgMap, ok := messages[i].(map[string]any)
 		if !ok {
-			return false, nil, fmt.Errorf("invalid message format in request")
+			return false, nil, queryHash, fmt.Errorf("invalid message format in request")
 		}
 
 		msgBytes, err := json.Marshal(msgMap)
 		if err != nil {
-			return false, nil, err
+			return false, nil, queryHash, err
 		}
 		msgStr := string(msgBytes)
 		msgSize := calculateTokensWithReserve(msgStr)
@@ -179,18 +179,23 @@ func feedPrompt(cleanUserContent string, req map[string]any) (changed bool, prom
 		appCtx.AccessLogger.Printf("Final messages count in request: %d", len(msgs))
 	}
 
-	return true, promptVector, nil
+	return true, promptVector, queryHash, nil
 }
 
 // processInbound processes the inbound request data (placeholder)
-func processInbound(data string) (responseBody string, cleanUserContent string, attachments []Attachment, promptVector []float32) {
+func processInbound(data string) (
+	responseBody string,
+	cleanUserContent string,
+	attachments []Attachment,
+	promptVector []float32,
+	queryHash string) {
 
 	req := make(map[string]any)
 	if err := json.Unmarshal([]byte(data), &req); err != nil {
 		if appCtx.Config.VerboseDiskLogs {
 			appCtx.AccessLogger.Printf("Skipping processing. Reason: data is not valid JSON: %s", data)
 		}
-		return data, "", nil, nil
+		return data, "", nil, nil, ""
 	}
 
 	if appCtx.Config.VerboseDiskLogs {
@@ -203,7 +208,7 @@ func processInbound(data string) (responseBody string, cleanUserContent string, 
 		if appCtx.Config.VerboseDiskLogs {
 			appCtx.AccessLogger.Printf("Skipping processing. Reason: %v", err)
 		}
-		return data, "", nil, nil
+		return data, "", nil, nil, ""
 	}
 
 	if appCtx.Config.VerboseDiskLogs {
@@ -212,17 +217,17 @@ func processInbound(data string) (responseBody string, cleanUserContent string, 
 		appCtx.AccessLogger.Printf("Attachments count: %d", len(attachments))
 	}
 
-	changed, promptVector, err := feedPrompt(cleanUserContent, req)
+	changed, promptVector, queryHash, err := feedPrompt(cleanUserContent, req)
 	if err != nil {
 		appCtx.ErrorLogger.Printf("Error in feedPrompt: %v", err)
-		return data, "", nil, nil
+		return data, "", nil, nil, queryHash
 	}
 
 	if !changed {
 		if appCtx.Config.VerboseDiskLogs {
 			appCtx.AccessLogger.Printf("No changes made to the request.")
 		}
-		return data, "", nil, nil
+		return data, "", nil, nil, queryHash
 	}
 
 	// Change temperature
@@ -232,7 +237,7 @@ func processInbound(data string) (responseBody string, cleanUserContent string, 
 	modifiedData, err := json.Marshal(req)
 	if err != nil {
 		appCtx.ErrorLogger.Printf("Error marshaling modified req: %v", err)
-		return data, "", nil, nil
+		return data, "", nil, nil, queryHash
 	}
 
 	if appCtx.Config.VerboseDiskLogs {
@@ -242,7 +247,7 @@ func processInbound(data string) (responseBody string, cleanUserContent string, 
 	} else {
 		appCtx.AccessLogger.Printf("Modified request object prepared. Original: %d bytes, Modified: %d bytes", len(data), len(modifiedData))
 	}
-	return string(modifiedData), cleanUserContent, attachments, promptVector
+	return string(modifiedData), cleanUserContent, attachments, promptVector, queryHash
 }
 
 // sha512sum computes the SHA-512 hash of the given text and returns it as a hexadecimal string
@@ -331,7 +336,7 @@ func storeAttachments(attachments []Attachment, packetID string) error {
 					return fmt.Errorf("error fetching old attachment body for ID %s: %w", att.Attachment.ID, err)
 				}
 				// Remove old from IDF
-				if err := removeDocumentFromIDF(oldBody, att.OldHash); err != nil {
+				if err := removeDocumentFromIDF(oldBody, att.OldTokenCount, att.OldHash); err != nil {
 					return fmt.Errorf("error removing old attachment from IDF for ID %s: %w", att.Attachment.ID, err)
 				}
 			} else {
@@ -375,7 +380,7 @@ func storeAttachments(attachments []Attachment, packetID string) error {
 }
 
 // processOutbound processes the outbound response data (placeholder)
-func processOutbound(cleanAssistantContent string, cleanUserContent string, attachments []Attachment, promptVector []float32) {
+func processOutbound(cleanAssistantContent string, cleanUserContent string, attachments []Attachment, promptVector []float32, queryHash string) {
 
 	if appCtx.Config.VerboseDiskLogs {
 		appCtx.AccessLogger.Printf("Request parsed data: Vector length: %d, Clean user content: %s, Attachments count: %d, Attachments: %v, Prompt vector: %v", len(promptVector), cleanUserContent, len(attachments), attachments, promptVector)
@@ -403,13 +408,12 @@ func processOutbound(cleanAssistantContent string, cleanUserContent string, atta
 
 	appCtx.AccessLogger.Printf("Calculated token sizes - Prompt: %d, Assistant: %d", promptSize, assistantSize)
 
-	promptHash := sha512sum(cleanUserContent)
 	assistantHash := sha512sum(cleanAssistantContent)
 
-	appCtx.AccessLogger.Printf("Calculated content hashes - Prompt: %s, Assistant: %s", promptHash, assistantHash)
+	appCtx.AccessLogger.Printf("Calculated content hashes - Prompt: %s, Assistant: %s", queryHash, assistantHash)
 
 	// Store user message
-	err = upsertPoint(cleanUserContent, promptVector, "user", promptSize, promptHash, packetID, nil, uuid.NewString())
+	err = upsertPoint(cleanUserContent, promptVector, "user", promptSize, queryHash, packetID, nil, uuid.NewString())
 	if err != nil {
 		appCtx.ErrorLogger.Printf("Error storing user message: %v", err)
 		return

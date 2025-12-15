@@ -28,11 +28,12 @@ func loadIDF() error {
 			// initialize empty store
 			appCtx.idfMu.Lock()
 			appCtx.IDFStore = IDFStore{
-				DF:       make(map[int]int),
-				N:        0,
-				IDF:      make(map[int]float64),
-				NgramDF:  make(map[string]int),
-				NgramIDF: make(map[string]float64),
+				DF:          make(map[int]int),
+				N:           0,
+				IDF:         make(map[int]float64),
+				NgramDF:     make(map[string]int),
+				NgramIDF:    make(map[string]float64),
+				TotalTokens: 0,
 			}
 			appCtx.idfMu.Unlock()
 			return nil
@@ -53,8 +54,9 @@ func loadIDF() error {
 
 // updateDocumentInIDF updates DF/IDF for tokens and n-grams of a document.
 // mode = +1 for adding a document, -1 for removing a document.
-func updateDocumentInIDF(body string, hash string, mode int) error {
-	ids, err := getCachedBodyTokenIDs(hash, body)
+func updateDocumentInIDF(body string, tokenCount int64, hash string, mode int) error {
+
+	ids, err := getCachedTokenIDs(hash, body)
 	if err != nil {
 		return err
 	}
@@ -68,11 +70,17 @@ func updateDocumentInIDF(body string, hash string, mode int) error {
 	// Update total document count
 	if mode > 0 {
 		appCtx.IDFStore.N++
+		appCtx.IDFStore.TotalTokens += tokenCount
 	} else if mode < 0 {
 		if appCtx.IDFStore.N > 0 {
 			appCtx.IDFStore.N--
+			// защититься от отрицательного TotalTokens
+			if appCtx.IDFStore.TotalTokens >= tokenCount {
+				appCtx.IDFStore.TotalTokens -= tokenCount
+			} else {
+				appCtx.IDFStore.TotalTokens = 0
+			}
 		} else {
-			// Log warning but don't fail
 			appCtx.ErrorLogger.Printf("Attempted to remove document from IDF when N is 0")
 		}
 	}
@@ -92,12 +100,17 @@ func updateDocumentInIDF(body string, hash string, mode int) error {
 			if appCtx.IDFStore.DF[id] > 0 {
 				appCtx.IDFStore.DF[id]--
 			} else {
-				// Log warning but don't fail
 				appCtx.ErrorLogger.Printf("Attempted to remove non-existent token from IDF")
 			}
 		}
 
 		df := appCtx.IDFStore.DF[id]
+		if df == 0 {
+			delete(appCtx.IDFStore.DF, id)
+			delete(appCtx.IDFStore.IDF, id)
+			continue
+		}
+
 		if N > 0 {
 			// Recalculate IDF for this token
 			appCtx.IDFStore.IDF[id] = math.Log1p(float64(N) / (1.0 + float64(df)))
@@ -121,13 +134,16 @@ func updateDocumentInIDF(body string, hash string, mode int) error {
 				if appCtx.IDFStore.NgramDF[ng] > 0 {
 					appCtx.IDFStore.NgramDF[ng]--
 				} else {
-					// Log warning but don't fail
 					appCtx.ErrorLogger.Printf("Attempted to remove non-existent ngram from IDF")
 				}
 			}
 			df := appCtx.IDFStore.NgramDF[ng]
+			if df == 0 {
+				delete(appCtx.IDFStore.NgramDF, ng)
+				delete(appCtx.IDFStore.NgramIDF, ng)
+				continue
+			}
 			if N > 0 {
-				// Recalculate IDF for this n-gram
 				appCtx.IDFStore.NgramIDF[ng] = math.Log1p(float64(N) / (1.0 + float64(df)))
 			} else {
 				appCtx.IDFStore.NgramIDF[ng] = 0
@@ -139,13 +155,13 @@ func updateDocumentInIDF(body string, hash string, mode int) error {
 }
 
 // Wrapper for adding a document
-func addDocumentToIDF(body string, hash string) error {
-	return updateDocumentInIDF(body, hash, +1)
+func addDocumentToIDF(body string, tokenCount int64, hash string) error {
+	return updateDocumentInIDF(body, tokenCount, hash, +1)
 }
 
 // Wrapper for removing a document
-func removeDocumentFromIDF(body string, hash string) error {
-	err := updateDocumentInIDF(body, hash, -1)
+func removeDocumentFromIDF(body string, tokenCount int64, hash string) error {
+	err := updateDocumentInIDF(body, tokenCount, hash, -1)
 	if err != nil {
 		return err
 	}

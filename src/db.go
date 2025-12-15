@@ -145,15 +145,14 @@ func scoreCandidate(f Features, weights []float64) float64 {
 }
 
 // SearchRelevantContentWithRerank searches relevant records using initial vector search and then reranks them
-func SearchRelevantContentWithRerank(queryVector []float32, queryText string) ([]Payload, error) {
+func SearchRelevantContentWithRerank(queryVector []float32, queryText string, queryHash string) ([]Payload, error) {
 	candidates, err := SearchRelevantContent(queryVector)
 	if err != nil {
 		return nil, err
 	}
 	appCtx.DebugLogger.Printf("Search returned %d candidates before reranking", len(candidates))
-
 	for i := range candidates {
-		err := updateFeaturesForCandidate(queryText, &candidates[i])
+		err := updateFeaturesForCandidate(queryText, queryHash, &candidates[i])
 		if err != nil {
 			appCtx.ErrorLogger.Printf("Error updating features for candidate: %v", err)
 		}
@@ -367,7 +366,7 @@ func SearchRelevantContent(queryVector []float32) ([]Candidate, error) {
 			}
 
 			// Recency
-			cand.Features.Recency = timeDecay(cand.Payload.Timestamp, appCtx.Config.TauDays)
+			cand.Features.Recency = timeDecay(cand.Payload.Timestamp)
 
 			// Role score
 			cand.Features.RoleScore = appCtx.Config.RoleWeights[cand.Payload.Role]
@@ -497,8 +496,9 @@ func planAttachmentSync(attachments []Attachment) (toInsert []AttachmentReplacem
 		}
 
 		existing := make(map[string]struct {
-			pointID string
-			hash    string
+			pointID    string
+			hash       string
+			tokenCount int64
 		}, len(order))
 
 		for _, chunk := range chunkStrings(order, 256) {
@@ -544,6 +544,12 @@ func planAttachmentSync(attachments []Attachment) (toInsert []AttachmentReplacem
 				if h := point.Payload["hash"]; h != nil {
 					hashVal = h.GetStringValue()
 				}
+				var tokenCountVal int64
+				if tc := point.Payload["token_count"]; tc != nil {
+					tokenCountVal = tc.GetIntegerValue()
+				}
+
+				// extract point ID
 
 				pointID := ""
 				switch pid := point.GetId().GetPointIdOptions().(type) {
@@ -554,11 +560,13 @@ func planAttachmentSync(attachments []Attachment) (toInsert []AttachmentReplacem
 				}
 
 				existing[id] = struct {
-					pointID string
-					hash    string
+					pointID    string
+					hash       string
+					tokenCount int64
 				}{
-					pointID: pointID,
-					hash:    hashVal,
+					pointID:    pointID,
+					hash:       hashVal,
+					tokenCount: tokenCountVal,
 				}
 			}
 		}
@@ -575,15 +583,17 @@ func planAttachmentSync(attachments []Attachment) (toInsert []AttachmentReplacem
 
 			if info, ok := existing[att.ID]; !ok {
 				toInsert = append(toInsert, AttachmentReplacement{
-					Attachment: att,
-					OldPointID: "-",
-					OldHash:    "-",
+					Attachment:    att,
+					OldPointID:    "-",
+					OldHash:       "-",
+					OldTokenCount: 0,
 				})
 			} else if info.hash != att.Hash {
 				toReplace = append(toReplace, AttachmentReplacement{
-					Attachment: att,
-					OldPointID: info.pointID,
-					OldHash:    info.hash,
+					Attachment:    att,
+					OldPointID:    info.pointID,
+					OldHash:       info.hash,
+					OldTokenCount: info.tokenCount,
 				})
 			}
 		}
@@ -616,7 +626,7 @@ func upsertPoint(body string, vector []float32, role string, tokenCount int64, h
 
 	// add to IDF
 
-	if err := addDocumentToIDF(body, hash); err != nil {
+	if err := addDocumentToIDF(body, tokenCount, hash); err != nil {
 		return fmt.Errorf("error adding document to IDF: %w", err)
 	}
 

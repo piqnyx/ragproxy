@@ -147,6 +147,7 @@ func runApp() error {
 		var cleanUserContent string
 		var attachments []Attachment
 		var promptVector []float32
+		var queryHash string
 		// Read and log request body
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -155,7 +156,7 @@ func runApp() error {
 			}
 		} else {
 			requestBody = string(bodyBytes)
-			requestBody, cleanUserContent, attachments, promptVector = processInbound(requestBody)
+			requestBody, cleanUserContent, attachments, promptVector, queryHash = processInbound(requestBody)
 			r.Body = io.NopCloser(bytes.NewReader([]byte(requestBody))) // Restore body
 			r.ContentLength = int64(len(requestBody))
 			r.Header.Set("Content-Type", "application/json")
@@ -182,7 +183,7 @@ func runApp() error {
 		outbound.ServeHTTP(collector, r)
 
 		// After the stream is complete, collect and process the response for the database
-		collector.CloseAndProcess(cleanUserContent, attachments, promptVector)
+		collector.CloseAndProcess(cleanUserContent, attachments, promptVector, queryHash)
 
 	})
 
@@ -248,6 +249,7 @@ func shutdownApp() {
 func main() {
 	// Command-line flags
 	configPath := flag.String("config", "", "Path to config file")
+	test := flag.Bool("test", false, "Debug: run tests and exit")
 	flushDB := flag.Bool("flush-db", false, "Flush the Qdrant database and exit")
 	qhost := flag.String("qhost", "", "Qdrant host for flush-db")
 	qport := flag.Int("qport", 0, "Qdrant port for flush-db")
@@ -282,8 +284,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Run application
-	err = runApp()
+	if !*test {
+		// Run application
+		err = runApp()
+	} else {
+		err = testFunc()
+		if err != nil {
+			fmt.Printf("Tests failed: %v\n", err)
+			os.Exit(1)
+		} else {
+			fmt.Printf("All tests passed successfully.\n")
+		}
+	}
+
 	// Always shutdown even if runApp returned error
 	shutdownApp()
 	if err != nil {

@@ -1,10 +1,13 @@
 package main
 
 import (
+	"encoding/binary"
 	"math"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/cespare/xxhash/v2"
 )
 
 // adaptiveMaxTokensNormalization: adaptive normalization based on token count
@@ -40,14 +43,14 @@ func payloadQuality(p Payload) float64 {
 }
 
 // timeDecay: recency = exp(-ageDays / tau)
-func timeDecay(timestamp float64, tau float64) float64 {
+func timeDecay(timestamp float64) float64 {
 	// timestamp is stored as UnixNano (float64)
 	ts := time.Unix(0, int64(timestamp)) // reinterpreting as nanoseconds from epoch
 	age := time.Since(ts).Hours() / 24.0 // age in days
 	if age < 0 {
 		age = 0 // protect against future dates
 	}
-	return math.Exp(-age / tau) // exponential decay
+	return math.Exp(-age / appCtx.Config.TauDays) // exponential decay
 }
 
 // keywordOverlapIDs computes the keyword overlap ratio between query and document using token IDs.
@@ -55,8 +58,8 @@ func timeDecay(timestamp float64, tau float64) float64 {
 // - query tokens can be cached (optional)
 // - early returns for empty cases
 // - simplified limit handling
-func keywordOverlapIDs(query string, docHash, docBody string) (float64, error) {
-	qIDs, err := getCachedQueryTokenIDs(query)
+func keywordOverlapIDs(query string, queryHash string, docHash, docBody string) (float64, error) {
+	qIDs, err := getCachedTokenIDs(queryHash, query)
 	if err != nil {
 		return 0, err
 	}
@@ -64,7 +67,7 @@ func keywordOverlapIDs(query string, docHash, docBody string) (float64, error) {
 		return 0, nil
 	}
 
-	docIDs, err := getCachedBodyTokenIDs(docHash, docBody)
+	docIDs, err := getCachedTokenIDs(docHash, docBody)
 	if err != nil {
 		return 0, err
 	}
@@ -88,15 +91,15 @@ func keywordOverlapIDs(query string, docHash, docBody string) (float64, error) {
 }
 
 // weightedKeywordOverlapIDs computes the weighted keyword overlap ratio between query and document using token IDs and IDF weights.
-func weightedKeywordOverlapIDs(query string, docHash, docBody string, fallbackWeight float64) (float64, error) {
-	qIDs, err := getCachedQueryTokenIDs(query)
+func weightedKeywordOverlapIDs(query string, queryHash string, docHash, docBody string, fallbackWeight float64) (float64, error) {
+	qIDs, err := getCachedTokenIDs(queryHash, query)
 	if err != nil {
 		return 0, err
 	}
 	if len(qIDs) == 0 {
 		return 0, nil
 	}
-	docIDs, err := getCachedBodyTokenIDs(docHash, docBody)
+	docIDs, err := getCachedTokenIDs(docHash, docBody)
 	if err != nil {
 		return 0, err
 	}
@@ -119,6 +122,17 @@ func weightedKeywordOverlapIDs(query string, docHash, docBody string, fallbackWe
 		return 0, nil
 	}
 	return sumFound / sumTotal, nil
+}
+
+// ngramHash computes a hash for a slice of token IDs using xxhash.
+func ngramHash(ids []int) uint64 {
+	h := xxhash.New()
+	for _, id := range ids {
+		var b [4]byte
+		binary.LittleEndian.PutUint32(b[:], uint32(id))
+		h.Write(b[:])
+	}
+	return h.Sum64()
 }
 
 // ngramsIDs generates n-grams from a slice of token IDs.
@@ -198,25 +212,33 @@ func weightedNgramOverlap(queryIDs, docIDs []int, n int, fallback float64) float
 	return sumFound / sumTotal
 }
 
+// uniqueInts: returns a slice of unique integers from the input slice.
+func uniqueInts(ids []int) []int {
+	set := make(map[int]struct{}, len(ids))
+	out := make([]int, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := set[id]; !ok {
+			set[id] = struct{}{}
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 // bm25Score computes BM25 score for a query and document.
 // qIDs: token IDs of query
 // docIDs: token IDs of document
 // docLen: length of document (token count)
 // store: IDFStore with DF and N
-func bm25Score(qIDs, docIDs []int, docLen int64, store IDFStore) float64 {
+func bm25Score(qIDs, docIDs []int, docLen int64, store IDFStore, avgdl float64) float64 {
 	if len(qIDs) == 0 || len(docIDs) == 0 {
-		appCtx.DebugLogger.Printf("BM25: empty qIDs or docIDs")
 		return 0
 	}
 
-	// reading config for BM25 parameters
-	k1 := appCtx.Config.BM25K1 //1.5
-	b := appCtx.Config.BM25B   //0.75
-
-	// average document length
-	avgdl := float64(store.N)
-	if avgdl == 0 {
-		avgdl = 1
+	k1 := appCtx.Config.BM25K1
+	b := appCtx.Config.BM25B
+	if avgdl <= 0 {
+		avgdl = 1.0
 	}
 
 	// term frequencies in document
@@ -226,6 +248,9 @@ func bm25Score(qIDs, docIDs []int, docLen int64, store IDFStore) float64 {
 	}
 
 	score := 0.0
+	appCtx.idfMu.RLock()
+	defer appCtx.idfMu.RUnlock()
+	N := float64(store.N)
 	for _, q := range qIDs {
 		f := float64(freq[q])
 		if f == 0 {
@@ -233,17 +258,11 @@ func bm25Score(qIDs, docIDs []int, docLen int64, store IDFStore) float64 {
 		}
 
 		df := float64(store.DF[q])
-		N := float64(store.N)
-		// IDF by classic BM25 formula
-		idf := math.Log((N - df + 0.5) / (df + 0.5))
-		if idf < 0 {
-			idf = 0 // protect against negative values
-		}
-
+		idf := math.Log1p((N - df + 0.5) / (df + 0.5))
+		// denom
 		denom := f + k1*(1-b+b*(float64(docLen)/avgdl))
 		score += idf * (f * (k1 + 1)) / denom
 	}
-
 	return score
 }
 
@@ -256,19 +275,20 @@ func normalizeBM25(score float64) float64 {
 
 // updateFeaturesForCandidate computes expensive features for reranking.
 // It fills KeywordOverlap, WeightedOverlap, BM25, NgramOverlap, WeightedNgram.
-func updateFeaturesForCandidate(query string, cand *Candidate) error {
+func updateFeaturesForCandidate(query string, queryHash string, cand *Candidate) error {
 
 	// get token IDs for query and document
-	qIDs, err := getCachedQueryTokenIDs(query)
+	qIDs, err := getCachedTokenIDs(queryHash, query)
 	if err != nil {
 		return err
 	}
+	qIDs = uniqueInts(qIDs)
 	if len(qIDs) == 0 {
 		return nil
 	}
 
 	// document token IDs
-	docIDs, err := getCachedBodyTokenIDs(cand.Payload.Hash, cand.Payload.Body)
+	docIDs, err := getCachedTokenIDs(cand.Payload.Hash, cand.Payload.Body)
 	if err != nil {
 		return err
 	}
@@ -287,7 +307,7 @@ func updateFeaturesForCandidate(query string, cand *Candidate) error {
 	}
 
 	// Keyword overlap
-	ko, err := keywordOverlapIDs(query, cand.Payload.Hash,
+	ko, err := keywordOverlapIDs(query, queryHash, cand.Payload.Hash,
 		cand.Payload.Body)
 	if err != nil {
 		return err
@@ -295,7 +315,7 @@ func updateFeaturesForCandidate(query string, cand *Candidate) error {
 	cand.Features.KeywordOverlap = ko
 
 	// Weighted keyword overlap (с IDF весами)
-	wko, err := weightedKeywordOverlapIDs(query, cand.Payload.Hash,
+	wko, err := weightedKeywordOverlapIDs(query, queryHash, cand.Payload.Hash,
 		cand.Payload.Body, 1.0)
 	if err != nil {
 		return err
@@ -303,7 +323,11 @@ func updateFeaturesForCandidate(query string, cand *Candidate) error {
 	cand.Features.WeightedOverlap = wko
 
 	// BM25
-	bm25 := bm25Score(qIDs, docIDs, cand.Payload.TokenCount, appCtx.IDFStore)
+	avgdl := 1.0
+	if appCtx.IDFStore.N > 0 {
+		avgdl = float64(appCtx.IDFStore.TotalTokens) / float64(appCtx.IDFStore.N)
+	}
+	bm25 := bm25Score(qIDs, docIDs, cand.Payload.TokenCount, appCtx.IDFStore, avgdl)
 	cand.Features.BM25 = normalizeBM25(bm25)
 
 	// N-gram overlap (например биграммы)
