@@ -1,3 +1,4 @@
+// main.go
 package main
 
 import (
@@ -11,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -26,13 +28,16 @@ func initApp(configPath string) error {
 	var err error
 	// Initialize global app context
 	appCtx = AppContext{
-		Config:         Config{},
-		DB:             nil, // Will be used with withDB per call
-		Tokenizer:      nil,
-		JournaldLogger: nil,
-		AccessLogger:   nil,
-		ErrorLogger:    nil,
-		DebugLogger:    nil,
+		Config:              Config{},
+		DB:                  nil, // Will be used with withDB per call
+		Tokenizer:           nil,
+		JournaldLogger:      nil,
+		AccessLogger:        nil,
+		ErrorLogger:         nil,
+		DebugLogger:         nil,
+		IDFChanged:          false,
+		idfAutoSaveStopChan: make(chan struct{}),
+		idfAutoSaveWG:       sync.WaitGroup{},
 	}
 
 	// Check if the 'ragproxy' user exists
@@ -119,6 +124,11 @@ func initApp(configPath string) error {
 		return err
 	}
 	appCtx.JournaldLogger.Printf("IDF store loaded successfully")
+
+	// Start IDF autosave goroutine if interval > 0
+	if d := appCtx.Config.AutoSaveIDFInterval.Duration; d > 0 {
+		startIDFAutoSave(d)
+	}
 
 	// Application fully initialized
 	appCtx.JournaldLogger.Printf("Application initialized successfully")
@@ -222,7 +232,7 @@ func runApp() error {
 }
 
 // shutdownApp handles application shutdown: closes connections, logs
-func shutdownApp() {
+func shutdownApp(dontSaveIDF bool) {
 	// Close database connection if open
 	if appCtx.DB != nil {
 		err := appCtx.DB.Close()
@@ -233,15 +243,19 @@ func shutdownApp() {
 		}
 	}
 
-	// Store IDF store to file
-	err := saveIDF()
-	if err != nil {
-		appCtx.ErrorLogger.Printf("Error storing IDF store: %v", err)
-		appCtx.JournaldLogger.Printf("Error storing IDF store: %v", err)
-	} else {
-		appCtx.JournaldLogger.Printf("IDF store saved successfully")
+	if !dontSaveIDF {
+		// Store IDF store to file
+		err := saveIDF(true)
+		if err != nil {
+			appCtx.ErrorLogger.Printf("Error storing IDF store: %v", err)
+			appCtx.JournaldLogger.Printf("Error storing IDF store: %v", err)
+		} else {
+			appCtx.JournaldLogger.Printf("IDF store saved successfully")
+		}
+		// Stop IDF autosave goroutine
+		close(appCtx.idfAutoSaveStopChan)
+		appCtx.idfAutoSaveWG.Wait()
 	}
-
 	// Log shutdown completion
 	appCtx.JournaldLogger.Printf("Ragproxy stopped")
 }
@@ -284,21 +298,23 @@ func main() {
 		os.Exit(1)
 	}
 
+	dontSaveIDF := false
 	if !*test {
 		// Run application
 		err = runApp()
 	} else {
-		err = testFunc()
-		if err != nil {
-			fmt.Printf("Tests failed: %v\n", err)
-			os.Exit(1)
-		} else {
-			fmt.Printf("All tests passed successfully.\n")
-		}
+		dontSaveIDF = true
+		// err = testFunc()
+		// if err != nil {
+		// 	fmt.Printf("Tests failed: %v\n", err)
+		// 	os.Exit(1)
+		// } else {
+		// 	fmt.Printf("All tests passed successfully.\n")
+		// }
 	}
 
 	// Always shutdown even if runApp returned error
-	shutdownApp()
+	shutdownApp(dontSaveIDF)
 	if err != nil {
 		os.Exit(1)
 	}

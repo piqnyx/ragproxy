@@ -1,3 +1,4 @@
+// log.go
 package main
 
 import (

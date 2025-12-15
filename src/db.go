@@ -1,3 +1,4 @@
+// db.go
 package main
 
 import (
@@ -119,9 +120,9 @@ func flushDatabase(host string, port int, collection string) error {
 
 // scoreCandidate computes a final score from Features using provided weights.
 // weights must have length == 10, corresponding to the Features fields in order.
-func scoreCandidate(f Features, weights []float64) float64 {
-	if len(weights) != 10 {
-		panic("scoreCandidate: weights length must be 10")
+func scoreCandidate(f Features, weights []float64) (float64, error) {
+	if len(weights) != 9 {
+		return 0.0, fmt.Errorf("invalid weights length: expected 9, got %d", len(weights))
 	}
 
 	vals := []float64{
@@ -129,19 +130,18 @@ func scoreCandidate(f Features, weights []float64) float64 {
 		f.Recency,         // 1
 		f.RoleScore,       // 2
 		f.BodyLen,         // 3
-		f.PayloadQuality,  // 4
-		f.KeywordOverlap,  // 5
-		f.WeightedOverlap, // 6
-		f.BM25,            // 7
-		f.NgramOverlap,    // 8
-		f.WeightedNgram,   // 9
+		f.KeywordOverlap,  // 4
+		f.WeightedOverlap, // 5
+		f.BM25,            // 6
+		f.NgramOverlap,    // 7
+		f.WeightedNgram,   // 8
 	}
 
 	score := 0.0
 	for i := range vals {
 		score += vals[i] * weights[i]
 	}
-	return score
+	return score, nil
 }
 
 // SearchRelevantContentWithRerank searches relevant records using initial vector search and then reranks them
@@ -150,13 +150,49 @@ func SearchRelevantContentWithRerank(queryVector []float32, queryText string, qu
 	if err != nil {
 		return nil, err
 	}
+
 	appCtx.DebugLogger.Printf("Search returned %d candidates before reranking", len(candidates))
+	qFull, err := getCachedTokenIDs(queryHash, queryText)
+	if err != nil {
+		appCtx.ErrorLogger.Printf("tokenize query error: %v", err)
+		qFull = []int{}
+	}
+	qUnique := uniqueInts(qFull)
+
+	queryLimit := len(qUnique)
+	if queryLimit > appCtx.Config.MaxQueryTokens {
+		queryLimit = appCtx.Config.MaxQueryTokens
+		if len(qUnique) > 2*queryLimit {
+			queryLimit = len(qUnique) / 2
+		}
+	}
+	if len(qUnique) > queryLimit {
+		qUnique = qUnique[:queryLimit] // mutate once here is fine
+	}
+
+	docUnique := make([][]int, len(candidates))
+	docFull := make([][]int, len(candidates))
 	for i := range candidates {
-		err := updateFeaturesForCandidate(queryText, queryHash, &candidates[i])
+		dIDs, _ := getCachedTokenIDs(candidates[i].Payload.Hash, candidates[i].Payload.Body)
+		docFull[i] = dIDs
+		docUnique[i] = uniqueInts(dIDs)
+	}
+
+	// Precompute per-document term-frequency maps
+	docTFs := make([]map[int]int, len(candidates))
+	for i := range candidates {
+		docTFs[i] = buildTermFreq(docFull[i]) // buildTermFreq expects []int
+	}
+
+	appCtx.idfMu.RLock()
+	for i := range candidates {
+		err := updateFeaturesForCandidate(qUnique, qFull, docFull[i], docUnique[i], docTFs[i], &candidates[i])
 		if err != nil {
 			appCtx.ErrorLogger.Printf("Error updating features for candidate: %v", err)
 		}
 	}
+	appCtx.idfMu.RUnlock()
+
 	appCtx.DebugLogger.Printf("Updated features for %d candidates", len(candidates))
 	for i := range candidates {
 		appCtx.DebugLogger.Printf("\tCandidate %d features: %+v", i, candidates[i].Features)
@@ -164,7 +200,13 @@ func SearchRelevantContentWithRerank(queryVector []float32, queryText string, qu
 	}
 
 	for i := range candidates {
-		candidates[i].Score = scoreCandidate(candidates[i].Features, appCtx.Config.DefaultWeights)
+		score, err := scoreCandidate(candidates[i].Features, appCtx.Config.DefaultWeights)
+		if err != nil {
+			appCtx.ErrorLogger.Printf("Error scoring candidate: %v", err)
+			candidates[i].Score = 0.0
+		} else {
+			candidates[i].Score = score
+		}
 	}
 	appCtx.DebugLogger.Printf("Reranked %d candidates", len(candidates))
 	for i := range candidates {
@@ -204,7 +246,7 @@ func SearchRelevantContentWithRerank(queryVector []float32, queryText string, qu
 }
 
 // SearchRelevantContent searches Qdrant and returns a slice of Candidate with fast features filled.
-// - cheap features (EmbSim, Recency, RoleScore, BodyLen, PayloadQuality) are computed here.
+// - cheap features (EmbSim, Recency, RoleScore, BodyLen are computed here.
 // - expensive features (IDF overlap, BM25, ngrams, cross-encoder) should be computed later in rerank step for top-K.
 func SearchRelevantContent(queryVector []float32) ([]Candidate, error) {
 	var results []Candidate
@@ -311,7 +353,10 @@ func SearchRelevantContent(queryVector []float32) ([]Candidate, error) {
 				payload.Body = v.GetStringValue()
 			}
 			if v, ok := point.Payload["token_count"]; ok {
-				payload.TokenCount = v.GetIntegerValue()
+				payload.TokenCount = int(v.GetIntegerValue())
+			}
+			if v, ok := point.Payload["clean_token_count"]; ok {
+				payload.CleanTokenCount = int(v.GetIntegerValue())
 			}
 			if v, ok := point.Payload["hash"]; ok {
 				payload.Hash = v.GetStringValue()
@@ -372,14 +417,7 @@ func SearchRelevantContent(queryVector []float32) ([]Candidate, error) {
 			cand.Features.RoleScore = appCtx.Config.RoleWeights[cand.Payload.Role]
 
 			// Body length normalized
-			var tokenCnt int64 = cand.Payload.TokenCount
-			if tokenCnt == 0 {
-				tokenCnt = calculateTokensWithReserve(cand.Payload.Body)
-			}
-			cand.Features.BodyLen = bodyLenNorm(tokenCnt)
-
-			// Payload quality heuristic
-			cand.Features.PayloadQuality = payloadQuality(cand.Payload)
+			cand.Features.BodyLen = bodyLenNorm(cand.Payload.CleanTokenCount)
 
 			/*
 				Ramain for second step (rerank):
@@ -387,7 +425,6 @@ func SearchRelevantContent(queryVector []float32) ([]Candidate, error) {
 				KeywordOverlap  float64 // [0,1]
 				WeightedOverlap float64 // [0,1]
 				BM25            float64 // [0,1]
-				PayloadQuality  float64 // [0,1]
 				NgramOverlap    float64 // [0,1]
 				WeightedNgram   float64 // [0,1]
 			*/
@@ -496,9 +533,10 @@ func planAttachmentSync(attachments []Attachment) (toInsert []AttachmentReplacem
 		}
 
 		existing := make(map[string]struct {
-			pointID    string
-			hash       string
-			tokenCount int64
+			pointID         string
+			hash            string
+			tokenCount      int
+			cleanTokenCount int
 		}, len(order))
 
 		for _, chunk := range chunkStrings(order, 256) {
@@ -544,9 +582,14 @@ func planAttachmentSync(attachments []Attachment) (toInsert []AttachmentReplacem
 				if h := point.Payload["hash"]; h != nil {
 					hashVal = h.GetStringValue()
 				}
-				var tokenCountVal int64
+				var tokenCountVal int
 				if tc := point.Payload["token_count"]; tc != nil {
-					tokenCountVal = tc.GetIntegerValue()
+					tokenCountVal = int(tc.GetIntegerValue())
+				}
+
+				var cleanTokenCountVal int
+				if tcc := point.Payload["clean_token_count"]; tcc != nil {
+					cleanTokenCountVal = int(tcc.GetIntegerValue())
 				}
 
 				// extract point ID
@@ -560,13 +603,15 @@ func planAttachmentSync(attachments []Attachment) (toInsert []AttachmentReplacem
 				}
 
 				existing[id] = struct {
-					pointID    string
-					hash       string
-					tokenCount int64
+					pointID         string
+					hash            string
+					tokenCount      int
+					cleanTokenCount int
 				}{
-					pointID:    pointID,
-					hash:       hashVal,
-					tokenCount: tokenCountVal,
+					pointID:         pointID,
+					hash:            hashVal,
+					tokenCount:      tokenCountVal,
+					cleanTokenCount: cleanTokenCountVal,
 				}
 			}
 		}
@@ -583,17 +628,19 @@ func planAttachmentSync(attachments []Attachment) (toInsert []AttachmentReplacem
 
 			if info, ok := existing[att.ID]; !ok {
 				toInsert = append(toInsert, AttachmentReplacement{
-					Attachment:    att,
-					OldPointID:    "-",
-					OldHash:       "-",
-					OldTokenCount: 0,
+					Attachment:         att,
+					OldPointID:         "-",
+					OldHash:            "-",
+					OldTokenCount:      0,
+					OldCleanTokenCount: 0,
 				})
 			} else if info.hash != att.Hash {
 				toReplace = append(toReplace, AttachmentReplacement{
-					Attachment:    att,
-					OldPointID:    info.pointID,
-					OldHash:       info.hash,
-					OldTokenCount: info.tokenCount,
+					Attachment:         att,
+					OldPointID:         info.pointID,
+					OldHash:            info.hash,
+					OldTokenCount:      info.tokenCount,
+					OldCleanTokenCount: info.cleanTokenCount,
 				})
 			}
 		}
@@ -622,11 +669,11 @@ func chunkStrings(values []string, chunkSize int) [][]string {
 }
 
 // upsertPoint adds a new point to the Qdrant database with the given parameters
-func upsertPoint(body string, vector []float32, role string, tokenCount int64, hash string, packetID string, fileMeta *FileMeta, pointID string) error {
+func upsertPoint(body string, vector []float32, role string, tokenCount, cleanTokenCount int, hash string, packetID string, fileMeta *FileMeta, pointID string) error {
 
 	// add to IDF
 
-	if err := addDocumentToIDF(body, tokenCount, hash); err != nil {
+	if err := addDocumentToIDF(body, cleanTokenCount, hash); err != nil {
 		return fmt.Errorf("error adding document to IDF: %w", err)
 	}
 
@@ -639,16 +686,17 @@ func upsertPoint(body string, vector []float32, role string, tokenCount int64, h
 	}
 
 	if appCtx.Config.VerboseDiskLogs {
-		appCtx.AccessLogger.Printf("Upserting point with ID: %s, PacketID: %s, Role: %s, TokenCount: %d, Body: %s, Hash: %s, FileMeta: %+v, Vector Length: %d", pointID, packetID, role, tokenCount, body, hash, *fileMeta, len(vector))
+		appCtx.AccessLogger.Printf("Upserting point with ID: %s, PacketID: %s, Role: %s, TokenCount: %d, CleanTokenCount: %d, Body: %s, Hash: %s, FileMeta: %+v, Vector Length: %d", pointID, packetID, role, tokenCount, cleanTokenCount, body, hash, *fileMeta, len(vector))
 	} else {
-		appCtx.AccessLogger.Printf("Upserting point with ID: %s, PacketID: %s, Role: %s, TokenCount: %d, Hash: %s, File: %t, Vector Length: %d", pointID, packetID, role, tokenCount, hash, fileMeta != nil, len(vector))
+		appCtx.AccessLogger.Printf("Upserting point with ID: %s, PacketID: %s, Role: %s, TokenCount: %d, CleanTokenCount: %d, Hash: %s, File: %t, Vector Length: %d", pointID, packetID, role, tokenCount, cleanTokenCount, hash, role == "file", len(vector))
 	}
 
 	valPacketID := qdrant.NewValueString(packetID)
 	valTimestamp := qdrant.NewValueDouble(timestamp)
 	valRole := qdrant.NewValueString(role)
 	valBody := qdrant.NewValueString(body)
-	valTokenCount := qdrant.NewValueInt(tokenCount)
+	valTokenCount := qdrant.NewValueInt(int64(tokenCount))
+	valCleanTokenCount := qdrant.NewValueInt(int64(cleanTokenCount))
 	valHash := qdrant.NewValueString(hash)
 	valFileMeta, _ := qdrant.NewValue(map[string]interface{}{
 		"id":   fileMeta.ID,
@@ -663,13 +711,14 @@ func upsertPoint(body string, vector []float32, role string, tokenCount int64, h
 					Id:      &qdrant.PointId{PointIdOptions: &qdrant.PointId_Uuid{Uuid: pointID}},
 					Vectors: qdrant.NewVectors(vector...),
 					Payload: map[string]*qdrant.Value{
-						"packet_id":   valPacketID,
-						"timestamp":   valTimestamp,
-						"role":        valRole,
-						"body":        valBody,
-						"token_count": valTokenCount,
-						"hash":        valHash,
-						"file_meta":   valFileMeta,
+						"packet_id":         valPacketID,
+						"timestamp":         valTimestamp,
+						"role":              valRole,
+						"body":              valBody,
+						"token_count":       valTokenCount,
+						"clean_token_count": valCleanTokenCount,
+						"hash":              valHash,
+						"file_meta":         valFileMeta,
 					},
 				},
 			},
@@ -678,7 +727,6 @@ func upsertPoint(body string, vector []float32, role string, tokenCount int64, h
 			appCtx.ErrorLogger.Printf("Error inserting model response: %v", err)
 			return err
 		}
-		appCtx.AccessLogger.Printf("Inserted model response with packet_id: %s", packetID)
 		return nil
 	})
 }

@@ -1,3 +1,4 @@
+// struct.go
 package main
 
 import (
@@ -13,50 +14,71 @@ import (
 
 // Config struct for TOML configuration
 type Config struct {
-	Listen                         string             `toml:"Listen"`
-	IDFFile                        string             `toml:"IDFFile"`
-	TokenBufferReserve             int64              `toml:"TokenBufferReserve"`
-	UserMessageTags                []string           `toml:"UserMessageTags"`
-	UserMessageAskAttachmentTags   []string           `toml:"UserMessageAskAttachmentTags"`
-	UserMessageAgentAttachmentTags []string           `toml:"UserMessageAgentAttachmentTags"`
-	Temperature                    float64            `toml:"Temperature"`
-	OllamaBase                     string             `toml:"OllamaBase"`
-	OllamaKeepAlive                string             `toml:"OllamaKeepAlive"`
-	OllamaUnloadOnLoVRAM           bool               `toml:"OllamaUnloadOnLoVRAM"`
-	EmbeddingModel                 string             `toml:"EmbeddingModel"`
-	EmbeddingsEndpoint             string             `toml:"EmbeddingsEndpoint"`
-	EmbeddingsModeWindowSize       int64              `toml:"EmbeddingsModeWindowSize"`
-	MainModel                      string             `toml:"MainModel"`
-	MainModelWindowSize            int64              `toml:"MainModelWindowSize"`
-	QdrantHost                     string             `toml:"QdrantHost"`
-	QdrantPort                     int                `toml:"QdrantPort"`
-	QdrantKeepAlive                int                `toml:"QdrantKeepAlive"`
-	QdrantCollection               string             `toml:"QdrantCollection"`
-	QdrantMetric                   string             `toml:"QdrantMetric"`
-	QdrantVectorSize               int                `toml:"QdrantVectorSize"`
-	MaxFileSize                    int                `toml:"MaxFileSize"`
-	FilePatterns                   []string           `toml:"FilePatterns"`
-	FilePatternsReg                []*regexp.Regexp   `toml:"-"`
-	SearchSource                   []string           `toml:"SearchSource"`
-	SearchMaxAgeDays               int64              `toml:"SearchMaxAgeDays"`
-	SearchTopK                     int64              `toml:"SearchTopK"`
-	CosineMinScore                 float32            `toml:"CosineMinScore"`
-	EuclidMaxDistance              float32            `toml:"EuclidMaxDistance"`
-	RerankTopN                     int                `toml:"RerankTopN"`
-	MinRankScore                   float64            `toml:"MinRankScore"`
-	MaxQueryTokens                 int                `toml:"MaxQueryTokens"`
-	TokensCacheTTL                 Duration           `toml:"TokensCacheTTL"`
-	TokensCacheSize                int                `toml:"TokensCacheSize"`
-	TauDays                        float64            `toml:"TauDays"`
-	MaxTokensNormalization         int                `toml:"MaxTokensNormalization"`
-	MinTokensNormalization         int                `toml:"MinTokensNormalization"`
-	DefaultWeights                 []float64          `toml:"DefaultWeights"`
-	ReturnVectors                  bool               `toml:"ReturnVectors"`
-	BM25K1                         float64            `toml:"BM25K1"`
-	BM25B                          float64            `toml:"BM25B"`
-	RoleWeights                    map[string]float64 `toml:"RoleWeights"`
-	FeedAugmentationPercent        int64              `toml:"FeedAugmentationPercent"`
-	VerboseDiskLogs                bool               `toml:"VerboseDiskLogs"`
+	Listen                         string                   `toml:"Listen"`
+	IDFFile                        string                   `toml:"IDFFile"`
+	AutoSaveIDFInterval            Duration                 `toml:"AutoSaveIDFInterval"`
+	TokenBufferReserve             int64                    `toml:"TokenBufferReserve"`
+	UserMessageTags                []string                 `toml:"UserMessageTags"`
+	UserMessageAskAttachmentTags   []string                 `toml:"UserMessageAskAttachmentTags"`
+	UserMessageAgentAttachmentTags []string                 `toml:"UserMessageAgentAttachmentTags"`
+	Temperature                    float64                  `toml:"Temperature"`
+	OllamaBase                     string                   `toml:"OllamaBase"`
+	OllamaKeepAlive                string                   `toml:"OllamaKeepAlive"`
+	OllamaUnloadOnLoVRAM           bool                     `toml:"OllamaUnloadOnLoVRAM"`
+	EmbeddingModel                 string                   `toml:"EmbeddingModel"`
+	EmbeddingsEndpoint             string                   `toml:"EmbeddingsEndpoint"`
+	EmbeddingsModeWindowSize       int64                    `toml:"EmbeddingsModeWindowSize"`
+	MainModel                      string                   `toml:"MainModel"`
+	MainModelWindowSize            int                      `toml:"MainModelWindowSize"`
+	QdrantHost                     string                   `toml:"QdrantHost"`
+	QdrantPort                     int                      `toml:"QdrantPort"`
+	QdrantKeepAlive                int                      `toml:"QdrantKeepAlive"`
+	QdrantCollection               string                   `toml:"QdrantCollection"`
+	QdrantMetric                   string                   `toml:"QdrantMetric"`
+	QdrantVectorSize               int                      `toml:"QdrantVectorSize"`
+	MaxFileSize                    int                      `toml:"MaxFileSize"`
+	FilePatterns                   []string                 `toml:"FilePatterns"`
+	FilePatternsReg                []*regexp.Regexp         `toml:"-"`
+	SearchSource                   []string                 `toml:"SearchSource"`
+	SearchMaxAgeDays               int64                    `toml:"SearchMaxAgeDays"`
+	SearchTopK                     int64                    `toml:"SearchTopK"`
+	CosineMinScore                 float32                  `toml:"CosineMinScore"`
+	EuclidMaxDistance              float32                  `toml:"EuclidMaxDistance"`
+	RerankTopN                     int                      `toml:"RerankTopN"`
+	MinRankScore                   float64                  `toml:"MinRankScore"`
+	MaxQueryTokens                 int                      `toml:"MaxQueryTokens"`
+	TokensCacheTTL                 Duration                 `toml:"TokensCacheTTL"`
+	TokensCacheSize                int                      `toml:"TokensCacheSize"`
+	TauDays                        float64                  `toml:"TauDays"`
+	MaxTokensNormalization         int                      `toml:"MaxTokensNormalization"`
+	MinTokensNormalization         int                      `toml:"MinTokensNormalization"`
+	DefaultWeights                 []float64                `toml:"DefaultWeights"`
+	ReturnVectors                  bool                     `toml:"ReturnVectors"`
+	BM25K1                         float64                  `toml:"BM25K1"`
+	BM25B                          float64                  `toml:"BM25B"`
+	BM25NormMidpoint               float64                  `toml:"BM25NormMidpoint"`
+	BM25NormSlope                  float64                  `toml:"BM25NormSlope"`
+	BM25UseLogNorm                 bool                     `toml:"BM25UseLogNorm"`
+	BM25LogNormScale               float64                  `toml:"BM25LogNormScale"`
+	UseBM25IDF                     bool                     `toml:"UseBM25IDF"`
+	RoleWeights                    map[string]float64       `toml:"RoleWeights"`
+	FeedAugmentationPercent        int                      `toml:"FeedAugmentationPercent"`
+	VerboseDiskLogs                bool                     `toml:"VerboseDiskLogs"`
+	SystemMessageFile              string                   `toml:"SystemMessageFile"`
+	SystemMessagePatch             SystemMessagePatchConfig `toml:"SystemMessagePatch"`
+}
+
+type PatchRule struct {
+	Find   string `toml:"find"`
+	Insert string `toml:"insert"`
+}
+
+type SystemMessagePatchConfig struct {
+	Replace    map[string]string `toml:"Replace"`
+	AddToBegin []string          `toml:"AddToBegin"`
+	AddToEnd   []string          `toml:"AddToEnd"`
+	AddAfter   []PatchRule       `toml:"AddAfter"`
+	Remove     []string          `toml:"Remove"`
 }
 
 // Duration is a wrapper around time.Duration to support custom unmarshaling
@@ -76,16 +98,19 @@ func (d *Duration) UnmarshalText(text []byte) error {
 
 // AppContext holds global application state
 type AppContext struct {
-	Config         Config
-	DB             *qdrant.Client
-	Tokenizer      *tiktoken.Tiktoken
-	JournaldLogger *log.Logger
-	AccessLogger   *log.Logger
-	ErrorLogger    *log.Logger
-	DebugLogger    *log.Logger
-	TokenCache     *lru.Cache
-	IDFStore       IDFStore
-	idfMu          sync.RWMutex
+	Config              Config
+	DB                  *qdrant.Client
+	Tokenizer           *tiktoken.Tiktoken
+	JournaldLogger      *log.Logger
+	AccessLogger        *log.Logger
+	ErrorLogger         *log.Logger
+	DebugLogger         *log.Logger
+	TokenCache          *TokenCacheWrapper
+	IDFStore            IDFStore
+	idfMu               sync.RWMutex
+	IDFChanged          bool
+	idfAutoSaveStopChan chan struct{}
+	idfAutoSaveWG       sync.WaitGroup
 }
 
 // IDFStore structure for IDF data
@@ -93,8 +118,8 @@ type IDFStore struct {
 	DF          map[int]int     // document frequency counters
 	N           int             // total number of documents
 	IDF         map[int]float64 // cached weights
-	NgramDF     map[string]int
-	NgramIDF    map[string]float64
+	NgramDF     map[uint64]int
+	NgramIDF    map[uint64]float64
 	TotalTokens int64
 }
 
@@ -102,6 +127,11 @@ type IDFStore struct {
 type FileMeta struct {
 	ID   string `json:"ID"`
 	Path string `json:"Path"`
+}
+
+type TokenCacheWrapper struct {
+	mu sync.RWMutex
+	c  *lru.Cache
 }
 
 // cachedEntry structure for token caching
@@ -113,23 +143,23 @@ type cachedEntry struct {
 
 // Qdrant Payload structure
 type Payload struct {
-	PacketID   string   `json:"PacketID"`
-	Timestamp  float64  `json:"Timestamp"`
-	Role       string   `json:"Role"`
-	Body       string   `json:"Body"`
-	TokenCount int64    `json:"TokenCount"`
-	Hash       string   `json:"Hash"`
-	FileMeta   FileMeta `json:"FileMeta"`
+	PacketID        string   `json:"PacketID"`
+	Timestamp       float64  `json:"Timestamp"`
+	Role            string   `json:"Role"`
+	Body            string   `json:"Body"`
+	TokenCount      int      `json:"TokenCount"`
+	CleanTokenCount int      `json:"CleanTokenCount"`
+	Hash            string   `json:"Hash"`
+	FileMeta        FileMeta `json:"FileMeta"`
 }
 
 // Features structure for candidate scoring
 type Features struct {
 	// Light features (fill in first step)
-	EmbSim         float64 // [0,1]
-	Recency        float64 // [0,1]
-	RoleScore      float64 // [0,1]
-	BodyLen        float64 // [0,1]
-	PayloadQuality float64 // [0,1]
+	EmbSim    float64 // [0,1]
+	Recency   float64 // [0,1]
+	RoleScore float64 // [0,1]
+	BodyLen   float64 // [0,1]
 	// Heavy features (fill in second step)
 	KeywordOverlap  float64 // [0,1]
 	WeightedOverlap float64 // [0,1]
@@ -155,8 +185,9 @@ type Attachment struct {
 }
 
 type AttachmentReplacement struct {
-	Attachment    Attachment
-	OldPointID    string
-	OldHash       string
-	OldTokenCount int64
+	Attachment         Attachment
+	OldPointID         string
+	OldHash            string
+	OldTokenCount      int
+	OldCleanTokenCount int
 }

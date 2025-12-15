@@ -1,7 +1,8 @@
+// consts.go
 package main
 
 var appConsts struct {
-	MessagesWrapperSize                 int64
+	MessagesWrapperSize                 int
 	AvailableMessageTags                []string
 	AvailableMessageAskAttachmentTags   []string
 	AvailableMessageAgentAttachmentTags []string
@@ -12,6 +13,8 @@ var appConsts struct {
 	UserMessageRightWrapper             string
 	AssistantMessageLeftWrapper         string
 	AssistantMessageRightWrapper        string
+	AttachmentLeftWrapper               string
+	AttachmentRightWrapper              string
 }
 
 func initConsts() {
@@ -29,16 +32,18 @@ func initConsts() {
 		"editorContext",
 	}
 	appConsts.AvailableSearchSources = []string{
-		"user",
-		"assistant",
-		"file",
+		"rag-user",
+		"rag-assistant",
+		"rag-file",
 	}
 	appConsts.Base64FileTag = "YXR0YWNobWVudA=="
 
 	appConsts.Base64FilesTag = "YXR0YWNobWVudHM="
 
 	appConsts.UserMessageLeftWrapper = "{\"content\":\""
-	appConsts.UserMessageRightWrapper = "\",\"role\":\"user\"},"
+	appConsts.UserMessageRightWrapper = "\",\"role\":\"rag-user\"},"
 	appConsts.AssistantMessageLeftWrapper = "{\"content\":\""
-	appConsts.AssistantMessageRightWrapper = "\",\"role\":\"assistant\"},"
+	appConsts.AssistantMessageRightWrapper = "\",\"role\":\"rag-assistant\"},"
+	appConsts.AttachmentLeftWrapper = "{\"content\":\""
+	appConsts.AttachmentRightWrapper = "\",\"role\":\"rag-file\"},"
 }

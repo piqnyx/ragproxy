@@ -1,3 +1,4 @@
+// config.go
 package main
 
 import (
@@ -68,6 +69,43 @@ func CheckEmbeddingNormalization() error {
 	} else {
 		appCtx.JournaldLogger.Printf("Embedding vector is normalized (norm=%.6f).", norm)
 	}
+	return nil
+}
+
+// validateSystemMessagePatch checks the SystemMessagePatchConfig for correctness
+func validateSystemMessagePatch(cfg *SystemMessagePatchConfig) error {
+	if cfg.Replace == nil {
+		return fmt.Errorf("SystemMessagePatch.Replace field must be defined")
+	}
+	if cfg.AddToBegin == nil {
+		return fmt.Errorf("SystemMessagePatch.AddToBegin field must be defined")
+	}
+	if cfg.AddToEnd == nil {
+		return fmt.Errorf("SystemMessagePatch.AddToEnd field must be defined")
+	}
+	if cfg.AddAfter == nil {
+		return fmt.Errorf("SystemMessagePatch.AddAfter field must be defined")
+	}
+	if cfg.Remove == nil {
+		return fmt.Errorf("SystemMessagePatch.Remove field must be defined")
+	}
+
+	for key, value := range cfg.Replace {
+		if strings.TrimSpace(key) == "" {
+			return fmt.Errorf("SystemMessagePatch.Replace: empty key is not allowed")
+		}
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("SystemMessagePatch.Replace: empty value for key '%s' is not allowed", key)
+		}
+	}
+
+	for _, rule := range cfg.AddAfter {
+		if strings.TrimSpace(rule.Find) == "" {
+			return fmt.Errorf("SystemMessagePatch.AddAfter: empty search key is not allowed")
+		}
+		// rule.Insert can be empty, meaning no insertion
+	}
+
 	return nil
 }
 
@@ -268,9 +306,9 @@ func validateConfig(config Config) error {
 		return fmt.Errorf("`MinTokensNormalization` is invalid: %d", config.MinTokensNormalization)
 	}
 
-	// DefaultWeights: non-empty list of 7 non-negative floats
-	if len(config.DefaultWeights) != 10 {
-		return fmt.Errorf("`DefaultWeights` must have exactly 7 elements, got %d", len(config.DefaultWeights))
+	// DefaultWeights: non-empty list of 9 non-negative floats
+	if len(config.DefaultWeights) != 9 {
+		return fmt.Errorf("`DefaultWeights` must have exactly 9 elements, got %d", len(config.DefaultWeights))
 	}
 	for i, w := range config.DefaultWeights {
 		if w < 0.0 {
@@ -280,15 +318,36 @@ func validateConfig(config Config) error {
 
 	// ReturnVectors: boolean (no validation needed)
 
-	// BM25K1: positive float
-	if config.BM25K1 <= 0.0 {
-		return fmt.Errorf("`BM25K1` is invalid: %f", config.BM25K1)
-	}
+	// BM25K1: 1.2–1.8
+	// if config.BM25K1 < 1.2 || config.BM25K1 > 1.8 {
+	// 	return fmt.Errorf("`BM25K1` is invalid: %f", config.BM25K1)
+	// }
 
-	// BM25B: 0.0 - 1.0
-	if config.BM25B < 0.0 || config.BM25B > 1.0 {
-		return fmt.Errorf("`BM25B` is invalid: %f", config.BM25B)
-	}
+	// BM25B: 0.5–0.75
+	// if config.BM25B < 0.5 || config.BM25B > 0.75 {
+	// 	return fmt.Errorf("`BM25B` is invalid: %f", config.BM25B)
+	// }
+
+	// BM25NormMidpoint: 0.0 - 1.0
+	// if config.BM25NormMidpoint < 0.0 {
+	// 	return fmt.Errorf("`BM25NormMidpoint` is invalid: %f", config.BM25NormMidpoint)
+	// }
+
+	// BM25NormSlope: 0.0 - 1.0
+	// if config.BM25NormSlope < 0.0 || config.BM25NormSlope > 1.0 {
+	// 	return fmt.Errorf("`BM25NormSlope` is invalid: %f", config.BM25NormSlope)
+	// }
+
+	// BM25UseLogNorm: boolean (no validation needed)
+
+	// BM25LogNormScale: 0.0 - 1.0 only if BM25UseLogNorm is true
+	// if config.BM25UseLogNorm {
+	// 	if config.BM25LogNormScale < 0.0 || config.BM25LogNormScale > 1.0 {
+	// 		return fmt.Errorf("`BM25LogNormScale` is invalid: %f", config.BM25LogNormScale)
+	// 	}
+	// }
+
+	// UseBM25IDF: boolean (no validation needed)
 
 	// RoleWeights: map of string to non-negative float
 	for role, weight := range config.RoleWeights {
@@ -314,6 +373,20 @@ func validateConfig(config Config) error {
 	}
 
 	// VerboseDiskLogs: boolean (no validation needed)
+
+	// SystemMessageFile: path to IDF DB file (non-empty)
+	if strings.TrimSpace(config.SystemMessageFile) == "" {
+		return fmt.Errorf("`SystemMessageFile` path is invalid: %s", config.SystemMessageFile)
+	}
+	// RegEx check for correct path and touch file after this validation
+	if _, err := os.Stat(config.SystemMessageFile); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("`SystemMessageFile` path is invalid or inaccessible: %v", err)
+	}
+
+	// SystemMessagePath struct
+	if err := validateSystemMessagePatch(&config.SystemMessagePatch); err != nil {
+		return err
+	}
 
 	return nil
 }

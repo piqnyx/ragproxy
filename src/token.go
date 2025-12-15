@@ -1,35 +1,74 @@
+// token.go
 package main
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	lru "github.com/hashicorp/golang-lru"
 )
 
+func NewTokenCacheWrapper(size int) (*TokenCacheWrapper, error) {
+	c, err := lru.New(size)
+	if err != nil {
+		return nil, err
+	}
+	return &TokenCacheWrapper{c: c}, nil
+}
+
+func (w *TokenCacheWrapper) Get(k string) (interface{}, bool) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.c.Get(k)
+}
+
+func (w *TokenCacheWrapper) Add(k string, v interface{}) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.c.Add(k, v)
+}
+
+func (w *TokenCacheWrapper) Remove(k string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.c.Remove(k)
+}
+
 // initTokenCache: initializes the token cache
 func initTokenCache() error {
 	var err error
-	appCtx.TokenCache, err = lru.New(appCtx.Config.TokensCacheSize)
+	wrapper, err := NewTokenCacheWrapper(appCtx.Config.TokensCacheSize)
 	if err != nil {
 		return err
 	}
+	appCtx.TokenCache = wrapper
 	return nil
 }
 
 // Calculates token count with reserve percentage
-func calculateTokensWithReserve(text string) int64 {
+func calculateTokensWithReserve(text string) int {
 	if appCtx.Tokenizer == nil {
 		panic("Tokenizer is not initialized")
 	}
 	tokens := appCtx.Tokenizer.Encode(text, nil, nil)
 	baseCount := len(tokens)
 	reservePercent := float64(appCtx.Config.TokenBufferReserve) / 100.0
-	adjustedCount := float64(baseCount) * (1 + reservePercent)
-	if adjustedCount < 0 {
-		adjustedCount = 0
+	adjusted := int(math.Ceil(float64(baseCount) * (1 + reservePercent)))
+	if adjusted < 0 {
+		adjusted = 0
 	}
-	return int64(adjustedCount)
+	return adjusted
+}
+
+func calculateTokensWithReserveTL(tokenList []int) int {
+	raw := len(tokenList)
+	reservePercent := float64(appCtx.Config.TokenBufferReserve) / 100.0
+	adjusted := int(math.Ceil(float64(raw) * (1.0 + reservePercent)))
+	if adjusted < 0 {
+		adjusted = 0
+	}
+	return adjusted
 }
 
 // tokenIDs: slice of int token IDs for given text.
