@@ -256,14 +256,14 @@ func updateReq(systemMsg, userPromptMsg map[string]any, history, feeds []map[str
 		resultMessages = append(resultMessages, systemMsg)
 	}
 
-	// 2. history: from oldest to second last (as is)
-	for i := len(history) - 1; i >= 0; i-- {
-		resultMessages = append(resultMessages, history[i])
-	}
-
-	// 3. feeds: from low relevance to high relevance (reverse order)
+	// 2. feeds: from low relevance to high relevance (reverse order)
 	for i := len(feeds) - 1; i >= 0; i-- {
 		resultMessages = append(resultMessages, feeds[i])
+	}
+
+	// 3. history: from oldest to second last (as is)
+	for i := len(history) - 1; i >= 0; i-- {
+		resultMessages = append(resultMessages, history[i])
 	}
 
 	// 4. userPromptMsg

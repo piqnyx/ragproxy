@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 project(ragproxy)
 
 # Найти Go
-find_program(GO_EXECUTABLE go)
+find_program(GO_EXECUTABLE /usr/local/go/bin/go)
 
 if(NOT GO_EXECUTABLE)
     message(FATAL_ERROR "Go executable not found!")
