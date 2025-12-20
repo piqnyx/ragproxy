@@ -53,9 +53,18 @@ func isFileAllowed(filePath string) bool {
 
 // parseAttachments scans content for tag blocks and extracts attachments.
 func parseAttachments(content string, tagList []string) (attachments []Attachment) {
-	fpLineRe := regexp.MustCompile(`(?i)^[ \t]*//[ \t]*filepath:[ \t]*(.+)$`)
-	userFileRemoveRe := regexp.MustCompile(`(?im)^[ \t]*user(?:'s)?[ \t]+active[ \t]+file(?:[ \t]+for[ \t]+additional[ \t]+context)?:[ \t]*$`)
-	attrFilePathRe := regexp.MustCompile(`(?i)\bfilepath\s*=\s*"([^"]+)"`)
+
+	var fpLineRe, userFileRemoveRe, attrFilePathRe *regexp.Regexp
+
+	if fpLineRe, _ = regexp.Compile(`(?i)^[ \t]*//[ \t]*filepath:[ \t]*(.+)$`); fpLineRe == nil {
+		return attachments
+	}
+	if userFileRemoveRe, _ = regexp.Compile(`(?im)^[ \t]*user(?:'s)?[ \t]+active[ \t]+file(?:[ \t]+for[ \t]+additional[ \t]+context)?:[ \t]*$`); userFileRemoveRe == nil {
+		return attachments
+	}
+	if attrFilePathRe, _ = regexp.Compile(`(?i)\bfilepath\s*=\s*"([^"]+)"`); attrFilePathRe == nil {
+		return attachments
+	}
 
 	for _, rawTag := range tagList {
 		tag := strings.TrimSpace(rawTag)
@@ -64,8 +73,10 @@ func parseAttachments(content string, tagList []string) (attachments []Attachmen
 		}
 
 		pattern := `(?is)<` + regexp.QuoteMeta(tag) + `\b([^>]*)>(.*?)</` + regexp.QuoteMeta(tag) + `>`
-		re := regexp.MustCompile(pattern)
-		matches := re.FindAllStringSubmatch(content, -1)
+		var matches [][]string
+		if re, err := regexp.Compile(pattern); err == nil {
+			matches = re.FindAllStringSubmatch(content, -1)
+		}
 
 		for _, m := range matches {
 			attrStr := ""
@@ -77,7 +88,7 @@ func parseAttachments(content string, tagList []string) (attachments []Attachmen
 				bodyRaw = m[2]
 			}
 
-			if regexp.MustCompile(`(?i)users?\s*'?s?\s*active\s*selection`).MatchString(bodyRaw) {
+			if re, err := regexp.Compile(`(?i)users?\s*'?s?\s*active\s*selection`); err == nil && re.MatchString(bodyRaw) {
 				continue
 			}
 
@@ -158,8 +169,10 @@ func readAttachments(existing []Attachment, content string, tagList []string) []
 		}
 
 		pattern := `(?is)<` + regexp.QuoteMeta(tag) + `\b([^>]*)>(.*?)</` + regexp.QuoteMeta(tag) + `>`
-		re := regexp.MustCompile(pattern)
-		matches := re.FindAllStringSubmatch(content, -1)
+		var matches [][]string
+		if re, err := regexp.Compile(pattern); err == nil {
+			matches = re.FindAllStringSubmatch(content, -1)
+		}
 
 		for _, m := range matches {
 			bodyRaw := ""
@@ -167,7 +180,11 @@ func readAttachments(existing []Attachment, content string, tagList []string) []
 				bodyRaw = m[2]
 			}
 
-			editorPathRe := regexp.MustCompile(`(?im)current file is[:\s]+(.+?)(?:\r?\n|<|$)`)
+			var editorPathRe *regexp.Regexp
+			if editorPathRe, _ = regexp.Compile(`(?im)current file is[:\s]+(.+?)(?:\r?\n|<|$)`); editorPathRe == nil {
+				continue
+			}
+
 			if epMatch := editorPathRe.FindStringSubmatch(bodyRaw); len(epMatch) > 1 {
 				filePath := strings.TrimSpace(epMatch[1])
 				filePath = strings.Trim(filePath, `"'`)
@@ -231,8 +248,10 @@ func extractByTags(content string, tagsList []string) []string {
 			`\b(?:\s+[^>]*?)?(?:>|\\u003e)(.*?)(?:<|\\u003c)(?:/|\\u002f)` +
 			regexp.QuoteMeta(tag) + `(?:>|\\u003e)`
 
-		re := regexp.MustCompile(pattern)
-		matches := re.FindAllStringSubmatch(content, -1)
+		var matches [][]string
+		if re, err := regexp.Compile(pattern); err == nil {
+			matches = re.FindAllStringSubmatch(content, -1)
+		}
 
 		for _, m := range matches {
 			if len(m) > 1 {

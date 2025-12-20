@@ -1,13 +1,5 @@
 package main
 
-// import (
-// 	"crypto/sha512"
-// 	"fmt"
-// 	"sort"
-// 	"strings"
-// 	"time"
-// )
-
 // // test helper: pretty-print a slice of ints (truncate if long)
 // func fmtIDs(ids []int, max int) string {
 // 	if len(ids) == 0 {
@@ -371,3 +363,39 @@ package main
 
 // 	return nil
 // }
+
+// ...existing code...
+import (
+	"fmt"
+)
+
+func testFunc() error {
+
+	// // Загружаем токенизатор из локального файла
+	// tk, err := tokenizers.FromPretrained("Qwen/Qwen3-Coder-30B-A3B-Instruct")
+	// if err != nil {
+	// 	return fmt.Errorf("error loading tokenizer: %v", err)
+	// }
+	// defer tk.Close()
+
+	text := "Hello my happy face is red Привет"
+
+	// // Кодируем текст в токен-идентификаторы и токены
+	ids, tokens := appCtx.Tokenizer.Encode(text, true) // true = добавить спец. токены
+	for i, id := range ids {
+		fmt.Printf("ID: %d  Token: %q\n", id, tokens[i])
+	}
+	fmt.Println()
+	for i, id := range tokens {
+		fmt.Printf("Token: %q  ID: %d\n", id, ids[i])
+	}
+
+	// // Декодируем обратно в строку (skipSpecial=true)
+	for id, _ := range ids {
+		decoded := appCtx.Tokenizer.Decode([]uint32{uint32(id)}, true)
+		fmt.Printf("ID: %d  Decoded: %q\n", id, decoded)
+	}
+
+	return nil
+
+}

@@ -1,9 +1,15 @@
 // token.go
 package main
 
+/*
+#cgo LDFLAGS: -L/home/piqnyx/.local/bin/ragproxy/lib -ltokenizers
+//#cgo CFLAGS: -I/home/piqnyx/.local/bin/ragproxy/include
+#include "/home/piqnyx/.local/bin/ragproxy/include/tokenizers.h"
+*/
+import "C"
+
 import (
 	"fmt"
-	"math"
 	"time"
 
 	lru "github.com/hashicorp/golang-lru"
@@ -47,42 +53,26 @@ func initTokenCache() error {
 }
 
 // Calculates token count with reserve percentage
-func calculateTokensWithReserve(text string) int {
+func calculateTokens(text string) int {
 	if appCtx.Tokenizer == nil {
 		panic("Tokenizer is not initialized")
 	}
-	tokens := appCtx.Tokenizer.Encode(text, nil, nil)
-	baseCount := len(tokens)
-	reservePercent := float64(appCtx.Config.TokenBufferReserve) / 100.0
-	adjusted := int(math.Ceil(float64(baseCount) * (1 + reservePercent)))
-	if adjusted < 0 {
-		adjusted = 0
-	}
-	return adjusted
-}
-
-func calculateTokensWithReserveTL(tokenList []int) int {
-	raw := len(tokenList)
-	reservePercent := float64(appCtx.Config.TokenBufferReserve) / 100.0
-	adjusted := int(math.Ceil(float64(raw) * (1.0 + reservePercent)))
-	if adjusted < 0 {
-		adjusted = 0
-	}
-	return adjusted
+	ids, _ := appCtx.Tokenizer.Encode(text, true)
+	return len(ids)
 }
 
 // tokenIDs: slice of int token IDs for given text.
-func tokenIDs(text string) ([]int, error) {
+func tokenIDs(text string) ([]uint32, error) {
 	if appCtx.Tokenizer == nil {
 		return nil, fmt.Errorf("tokenizer not initialized: call InitEncoder")
 	}
-	ids := appCtx.Tokenizer.Encode(text, nil, nil)
+	ids, _ := appCtx.Tokenizer.Encode(text, true)
 	// return as []int
 	return ids, nil
 }
 
 // getCachedTokenIDs: returns token IDs for payload.Body with caching.
-func getCachedTokenIDs(hash, body string) ([]int, error) {
+func getCachedTokenIDs(hash, body string) ([]uint32, error) {
 	if hash != "" {
 		if v, ok := appCtx.TokenCache.Get(hash); ok {
 			if e, ok := v.(*cachedEntry); ok {

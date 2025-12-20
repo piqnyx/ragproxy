@@ -1,6 +1,14 @@
 // consts.go
 package main
 
+// Packet types enumeration
+const (
+	OtherPacket = iota
+	DirectPacket
+	StreamPacket
+	FinishStreamPacket
+)
+
 var appConsts struct {
 	MessagesWrapperSize                 int
 	AvailableMessageTags                []string
@@ -20,7 +28,7 @@ var appConsts struct {
 func initConsts() {
 
 	appConsts.MessagesWrapperSize =
-		calculateTokensWithReserve(`"messages":[`) + calculateTokensWithReserve(`],`)
+		calculateTokens(`"messages":[`) + calculateTokens(`],`)
 	appConsts.AvailableMessageTags = []string{
 		"userRequest",
 		"prompt",

@@ -40,8 +40,8 @@ func timeDecay(timestamp float64) float64 {
 }
 
 // keywordOverlapIDs computes the keyword overlap ratio between query and document using token IDs.
-func keywordOverlapIDs(qIDs []int, docIDs []int) float64 {
-	set := make(map[int]struct{}, len(docIDs))
+func keywordOverlapIDs(qIDs []uint32, docIDs []uint32) float64 {
+	set := make(map[uint32]struct{}, len(docIDs))
 	for _, id := range docIDs {
 		set[id] = struct{}{}
 	}
@@ -55,8 +55,8 @@ func keywordOverlapIDs(qIDs []int, docIDs []int) float64 {
 }
 
 // weightedKeywordOverlapIDs computes the weighted keyword overlap ratio between query and document using token IDs and IDF weights.
-func weightedKeywordOverlapIDs(qIDs []int, docIDs []int, fallbackWeight float64) float64 {
-	docSet := make(map[int]struct{}, len(docIDs))
+func weightedKeywordOverlapIDs(qIDs []uint32, docIDs []uint32, fallbackWeight float64) float64 {
+	docSet := make(map[uint32]struct{}, len(docIDs))
 	for _, id := range docIDs {
 		docSet[id] = struct{}{}
 	}
@@ -78,11 +78,11 @@ func weightedKeywordOverlapIDs(qIDs []int, docIDs []int, fallbackWeight float64)
 }
 
 // ngramHashes computes hashes for n-grams of token IDs using xxhash.
-func ngramHashes(ids []int, n int) []uint64 {
+func ngramHashes(ids []uint32, n int) []uint64 {
 	if n <= 1 {
 		out := make([]uint64, len(ids))
 		for i, id := range ids {
-			out[i] = ngramHash([]int{id})
+			out[i] = ngramHash([]uint32{id})
 		}
 		return out
 	}
@@ -97,7 +97,7 @@ func ngramHashes(ids []int, n int) []uint64 {
 }
 
 // ngramHash computes a hash for a slice of token IDs using xxhash.
-func ngramHash(ids []int) uint64 {
+func ngramHash(ids []uint32) uint64 {
 	h := xxhash.New()
 	for _, id := range ids {
 		var b [4]byte
@@ -161,9 +161,9 @@ func weightedNgramOverlapHashes(qHashes, dHashes []uint64, ngramIDF map[uint64]f
 }
 
 // uniqueInts: returns a slice of unique integers from the input slice.
-func uniqueInts(ids []int) []int {
-	set := make(map[int]struct{}, len(ids))
-	out := make([]int, 0, len(ids))
+func uniqueInts(ids []uint32) []uint32 {
+	set := make(map[uint32]struct{}, len(ids))
+	out := make([]uint32, 0, len(ids))
 	for _, id := range ids {
 		if _, ok := set[id]; !ok {
 			set[id] = struct{}{}
@@ -173,8 +173,8 @@ func uniqueInts(ids []int) []int {
 	return out
 }
 
-func buildTermFreq(ids []int) map[int]int {
-	tf := make(map[int]int, len(ids))
+func buildTermFreq(ids []uint32) map[uint32]int {
+	tf := make(map[uint32]int, len(ids))
 	for _, id := range ids {
 		tf[id]++
 	}
@@ -182,7 +182,7 @@ func buildTermFreq(ids []int) map[int]int {
 }
 
 // bm25ScoreFromTF computes BM25 score for a query and document.
-func bm25ScoreFromTF(qIDs []int, docTF map[int]int, docLen int, store IDFStore, avgdl float64) float64 {
+func bm25ScoreFromTF(qIDs []uint32, docTF map[uint32]int, docLen int, store IDFStore, avgdl float64) float64 {
 	if len(qIDs) == 0 || len(docTF) == 0 {
 		return 0
 	}
@@ -234,7 +234,7 @@ func normalizeBM25(score float64) float64 {
 // - docUnique: unique token ids for the document (computed before taking locks)
 // - docTF: term frequency map for the document (computed before taking locks)
 // - cand: pointer to candidate to fill features for
-func updateFeaturesForCandidate(qUnique []int, qFull []int, docFull []int, docUnique []int, docTF map[int]int, cand *Candidate) error {
+func updateFeaturesForCandidate(qUnique []uint32, qFull []uint32, docFull []uint32, docUnique []uint32, docTF map[uint32]int, cand *Candidate) error {
 	if cand == nil {
 		return nil
 	}
@@ -252,7 +252,7 @@ func updateFeaturesForCandidate(qUnique []int, qFull []int, docFull []int, docUn
 	// Document length: prefer payload token count, fallback to actual full doc length
 	docLen := cand.Payload.CleanTokenCount
 	if docLen == 0 {
-		docLen = calculateTokensWithReserveTL(docFull)
+		docLen = len(docFull)
 	}
 
 	// avgdl for BM25

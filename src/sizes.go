@@ -18,7 +18,7 @@ func calcMetaSize(req map[string]any) (metaSize int, err error) {
 		return 0, err
 	}
 	metaStr := string(metaBytes)
-	metaSize = calculateTokensWithReserve(metaStr)
+	metaSize = calculateTokens(metaStr)
 
 	return metaSize, nil
 }
@@ -43,7 +43,7 @@ func calcSystemMsgSize(req map[string]any) (systemMsgSize int, systemMsg map[str
 		systemMsgStr += ","
 	}
 
-	systemMsgSize = calculateTokensWithReserve(systemMsgStr)
+	systemMsgSize = calculateTokens(systemMsgStr)
 	return systemMsgSize, systemMsg, true, nil
 }
 
@@ -61,7 +61,7 @@ func calcUserPromptSize(req map[string]any) (userPromptSize int, userPromptMsg m
 		return 0, nil, err
 	}
 
-	userPromptSize = calculateTokensWithReserve(string(msgBytes))
+	userPromptSize = calculateTokens(string(msgBytes))
 	return userPromptSize, userPromptMsg, nil
 }
 

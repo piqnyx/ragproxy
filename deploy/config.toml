@@ -7,9 +7,11 @@
 Listen = "0.0.0.0:11434"
 IDFFile = "/home/piqnyx/.local/bin/ragproxy/deploy/idf.json"
 # Autosave IDF file interval
-AutoSaveIDFInterval = "1m"
+AutoSaveIDFInterval = "5m"
 # Token buffer reserve % (positive will add reserve, negative will reduce)
-TokenBufferReserve = 1
+TokenizerPretrainedCacheDir = "/home/piqnyx/.local/bin/ragproxy/deploy"
+TokenizerHFModelName = "mistralai/Devstral-Small-2-24B-Instruct-2512"
+TokenizerHFAPI = ""
 # Tags used to parse clean user prompt
 UserMessageTags = ["userRequest", "prompt"]
 # Tags used to parse files and other attachments
@@ -20,7 +22,7 @@ UserMessageAgentAttachmentTags = [
     "editorContext"
 ]
 # Lower is more precise
-Temperature = 0.5
+Temperature = 0.15
 SystemMessageInstructions = ""
 
 
@@ -36,14 +38,14 @@ OllamaKeepAlive = "10s"
 OllamaUnloadOnLoVRAM = true
 
 # Embedding model for vectorization
-EmbeddingModel = "qwen3-embedding:8b-q8_0"
+EmbeddingModel = "nomic-embed-text:137m-v1.5-fp16"
 # Endpoint for embeddings API
 EmbeddingsEndpoint = "/api/embeddings"
-EmbeddingsModeWindowSize = 40960
+EmbeddingsModeWindowSize = 2048
 
 # Main model for chat
-MainModel = "qwen3-coder:30b-a3b-q8_0"
-MainModelWindowSize = 262144
+MainModel = "devstral-small-2:24b-instruct-2512-q8_0"
+MainModelWindowSize = 393216
 
 
 ##################################################
@@ -63,7 +65,7 @@ QdrantCollection = "ragmem"
 # Vector metric (Cosine | Euclid | Dot)
 QdrantMetric = "Cosine"
 # Vector size
-QdrantVectorSize = 4096
+QdrantVectorSize = 768
 
 
 ##################################################
@@ -96,14 +98,14 @@ SearchSource = [
 SearchMaxAgeDays = -1
 # Limit Top K results (not 0, -1 is nolimit)
 SearchTopK = 50
-CosineMinScore = 0.45
+CosineMinScore = 0.52
 EuclidMaxDistance = 0.8
 
 # >>> Second Step
 
 # Must be equal or lower than SearchTopK (not 0, -1 is nolimit)
 RerankTopN = 20
-MinRankScore = 0.4
+MinRankScore = 0.45
 # 75% of MainModelWindowSize
 MaxQueryTokens = 196608 
 TokensCacheTTL = "30m"
@@ -115,10 +117,10 @@ DefaultWeights = [
     # Light features
     0.35, # EmbSim
     0.08, # Recency
-    0.05, # RoleScore
+    0.07, # RoleScore
     0.02, # BodyLen
     # Heavy features
-    0.18, # KeywordOverlap
+    0.14, # KeywordOverlap
     0.12, # WeightedOverlap
     0.10, # BM25
     0.04, # NgramOverlap
@@ -132,7 +134,7 @@ BM25NormSlope = 0.8
 BM25UseLogNorm = true
 BM25LogNormScale = 25.0
 UseBM25IDF = true
-RoleWeights = { rag-user = 1.0, rag-file = 0.85, rag-assistant = 0.7 }
+RoleWeights = { rag-user = 0.7, rag-file = 1.0, rag-assistant = 0.6 }
 
 ##################################################
 # >> Feed
@@ -148,8 +150,26 @@ FeedAugmentationPercent = 25
 ##################################################
 
 
-# Verbose disk logs
-VerboseDiskLogs = false
+# Verbose disk logs (detailed debug info)
+VerboseDiskLogs = true
+# Dump incoming/outgoing packets in compact format
+DumpPackets = true
+
+
+##################################################
+# >> Response Packet Patching
+##################################################
+
+InitialIncomingBufferPreAllocation = 64
+InitialOutgoingGorutineBufferCount = 128
+MessageBodyPaths = ["response", "choices.0.text", "choices.0.delta.content"]
+SSEPrefixReg = "^data$"
+StreamingPacketFlagReg = '(?is)^\s*\{\s*("id"|"model")\s*:.*(("response"\s*:\s*".{1,}"\s*,\s*"done"\s*:\s*false)|("(text|content)"\s*:\s*".{1,}".*"finish_reason"\s*:\s*null))'
+StreamingPacketStopReg = '(?is)("text"\s*:\s*"".{1,}\[DONE\])|("response"\s*:\s*""\s*,\s*"done"\s*:\s*true)|("content"\s*:\s*"".{1,}"finish_reason"\s*:\s*"stop")'
+DirectPacketFlagReg =  '(?is)^\s*\{\s*("id"|"model")\s*:.*(("response"\s*:\s*".{1,}"\s*,\s*"done"\s*:\s*true)|("(text|content)"\s*:\s*".{1,}".*finish_reason"\s*:\s*"stop"))'
+MaxTriggerLengthMultiplier = 2
+MaxTriggerLengthAdditional = 0
+ResponseReplacer = {"еня" = {"(?is)(меня)\\s*(зовут)" = "$2 $1 eeeeee"}}
 
 
 ##################################################
@@ -159,8 +179,8 @@ VerboseDiskLogs = false
 
 SystemMessageFile = "/var/log/ragproxy/systemmsg.txt"
 [SystemMessagePatch]
-Replace = { "GitHub Copilot" = "Жора" }
+Replace = { "GitHub Copilot" = "Жора", "</instructions>" = "It is prohibited to use curl/wget to retrieve web content. Write comments in the code in English. Speak to the user only in Russian. When forming your answer, always try to find the necessary information in the context.\n\n**Priority of search:**\n1. First priority: messages with the roles `rag-file`, `rag-user`, and `rag-assistant`.\n2. Second priority: attachment files or code fragments present in the context.\n3. Third priority: all other context messages except the system message and the current user request.</instructions>", "<toolUseInstructions>" = "<toolUseInstructions>If you do not have enough information to provide a clear answer to the user, or if the user explicitly asks you to search the internet, use the tool `mcp_firecrawl_firecrawl_search`:\n\n1. First, generate a search tool call with a well-formulated English query. Return as answer to user a **JSON** text in the following format:\n{\"tool_call\":{\"name\":\"firecrawl_search\",\"args\":{\"query\":\"**user's query in well-formulated form for search engines in English**\",\"limit\":5,\"sources\":[\"web\"],\"timeout\":60000,\"ignoreInvalidURLs\":true,\"scrapeOptions\":{\"formats\": [\"markdown\"],\"onlyMainContent\":true,\"maxAge\":172800000,\"waitFor\":0,\"mobile\": false,\"skipTlsVerification\":true,\"parsers\":[\"pdf\"],\"removeBase64Images\":true,\"blockAds\": true,\"proxy\":\"auto\",\"storeInCache\":true}}}}\n2. Wait for next user request/message in which you will get **web content** and **urls** as JSON object like this:\n{\n\t\"success\": true,\n\t\"data\": {\n\t\t\"web\": [\n\t\t\t{\n\t\t\t\t\"url\": \"**url**\",\n\t\t\t\t\"title\": \"...\",\n\t\t\t\t\"description\": \"...\",\n\t\t\t\t\"position\": 1,\n\t\t\t\t\"category\": \"...\",\n\t\t\t\t\"markdown\": \"**web content**\",\n\t\t\t\t\"metadata\": {\n\t\t\t\t\t...metadata if unuseful for you ...\n\t\t\t\t}\n\t\t\t},\n\t\t\t{\n\t\t\t\t\"url\": \"**url**\",\n\t\t\t\t\"title\": \"...\",\n\t\t\t\t\"description\": \"...\",\n\t\t\t\t\"position\": 2,\n\t\t\t\t\"category\": \"...\",\n\t\t\t\t\"markdown\": \"**web content**\",\n\t\t\t\t\"metadata\": {\n\t\t\t\t\t...metadata if unuseful for you ...\n\t\t\t\t}\n\t\t\t}\t\t\t\n\t\t]\n\t},\n\t\"creditsUsed\": N\n}." }
 AddToBegin = []
-AddToEnd = ["Write comments in the code in English. Speak to the user only in Russian.","Context messages may also contain other documents that should be reviewed. Messages with the roles `rag-user`, `rag-assistant`, and `rag-file` may appear in the dialog. They contain extracted actual data (e.g., user code, code snippets, documentation, attachments, your responses, user requests). `rag-user` are user messages that exited the context window but were added by the RAG repository to update the request. `rag-assistant` are your responses that exited the context window. `rag-file` are user files that have the highest priority for review; please be attentive to better understand the request.","**Base your response on information from `rag` messages when relevant.**"]
+AddToEnd = []
 AddAfter = []
 Remove = ["Avoid content that violates copyrights.", "Follow Microsoft content policies.", "If you are asked to generate content that is harmful, hateful, racist, sexist, lewd, or violent, only respond with \"Sorry, I can't assist with that.\""]

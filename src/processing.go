@@ -152,11 +152,11 @@ func prepareFeeds(historySize *int, feedSize *int, relevantContent []Payload, re
 		txt := payload.Body[:n]
 		if messageExists(req, payload.Body) {
 			appCtx.AccessLogger.Printf("Skipping already existing message in request: %s", txt)
-			appCtx.DebugLogger.Printf("Skipping already existing message in request: %s", txt)
+			// appCtx.DebugLogger.Printf("Skipping already existing message in request: %s", txt)
 			continue
 		} else {
 			appCtx.AccessLogger.Printf("Adding new message to request: %s", txt)
-			appCtx.DebugLogger.Printf("Adding new message to request: %s", txt)
+			// appCtx.DebugLogger.Printf("Adding new message to request: %s", txt)
 		}
 
 		var content string
@@ -188,21 +188,21 @@ func prepareFeeds(historySize *int, feedSize *int, relevantContent []Payload, re
 	*historySize += *feedSize // Use remaining for history
 
 	appCtx.AccessLogger.Printf("Feeds prepared: %d, Remaining history size: %d", len(feeds), *historySize)
-	formatFeed := func(feed map[string]any) string {
-		content, ok := feed["content"].(string)
-		if !ok {
-			return ""
-		}
-		if len(content) > 64 {
-			content = content[:64] + "..."
-		}
-		return content
-	}
-	appCtx.DebugLogger.Printf("FEEDS BEGIN ====================")
-	for _, feed := range feeds {
-		appCtx.DebugLogger.Printf(">> %s\n", formatFeed(feed))
-	}
-	appCtx.DebugLogger.Printf("FEEDS END ======================")
+	// formatFeed := func(feed map[string]any) string {
+	// 	content, ok := feed["content"].(string)
+	// 	if !ok {
+	// 		return ""
+	// 	}
+	// 	if len(content) > 64 {
+	// 		content = content[:64] + "..."
+	// 	}
+	// 	return content
+	// }
+	// appCtx.DebugLogger.Printf("FEEDS BEGIN ====================")
+	// for _, feed := range feeds {
+	// 	 appCtx.DebugLogger.Printf(">> %s\n", formatFeed(feed))
+	// }
+	// appCtx.DebugLogger.Printf("FEEDS END ======================")
 
 	appCtx.AccessLogger.Printf("Prepared %d feed messages. Remaining feed size: %d", len(feeds), feedSize)
 	return feeds
@@ -234,7 +234,7 @@ func prepareHistory(historySize *int, systemMsg map[string]any, req map[string]a
 			return nil, err
 		}
 		msgStr := string(msgBytes)
-		msgSize := calculateTokensWithReserve(msgStr)
+		msgSize := calculateTokens(msgStr)
 
 		if *historySize < msgSize {
 			break
@@ -334,20 +334,20 @@ func feedPrompt(cleanUserContent string, req map[string]any) (changed bool, prom
 	updateReq(systemMsg, userPromptMsg, history, feeds, req)
 
 	// Log final messages to DebugLogger Truncating long contents
-	appCtx.DebugLogger.Printf("FINAL MESSAGES BEGIN ====================")
+	// appCtx.DebugLogger.Printf("FINAL MESSAGES BEGIN ====================")
 	//print role and truncated (128 chars max) content
-	for _, msg := range req["messages"].([]any) {
-		m := msg.(map[string]any)
-		role, _ := m["role"].(string)
-		content, _ := m["content"].(string)
-		if len(content) > 256 {
-			content = content[:256] + "..."
-		}
-		appCtx.DebugLogger.Printf(">>------")
-		appCtx.DebugLogger.Printf("Role: %s", role)
-		appCtx.DebugLogger.Printf("Content: %s", content)
-	}
-	appCtx.DebugLogger.Printf("FINAL MESSAGES END ======================")
+	// for _, msg := range req["messages"].([]any) {
+	// m := msg.(map[string]any)
+	// role, _ := m["role"].(string)
+	// content, _ := m["content"].(string)
+	// if len(content) > 256 {
+	// 	content = content[:256] + "..."
+	// }
+	// appCtx.DebugLogger.Printf(">>------")
+	// appCtx.DebugLogger.Printf("Role: %s", role)
+	// appCtx.DebugLogger.Printf("Content: %s", content)
+	// }
+	// appCtx.DebugLogger.Printf("FINAL MESSAGES END ======================")
 
 	if appCtx.Config.VerboseDiskLogs {
 		appCtx.AccessLogger.Printf("Final messages count: %d, request: %v", len(req["messages"].([]any)), req["messages"])
@@ -453,7 +453,7 @@ func calcFileSize(att Attachment) (tokenCount int, err error) {
 	)
 
 	// Calculate token count with reserve
-	return calculateTokensWithReserve(appConsts.AttachmentLeftWrapper + content + appConsts.AttachmentRightWrapper), nil
+	return calculateTokens(appConsts.AttachmentLeftWrapper + content + appConsts.AttachmentRightWrapper), nil
 }
 
 // Attachment represents a user message attachment
@@ -477,16 +477,16 @@ func storeAttachments(attachments []Attachment, packetID string) error {
 			}
 
 			tokenCount, err := calcFileSize(att.Attachment)
-			cleanTokenCount := calculateTokensWithReserve(att.Attachment.Body)
+			cleanTokenCount := calculateTokens(att.Attachment.Body)
 			if err != nil {
 				return fmt.Errorf("error calculating token size for attachment ID %s: %w", att.Attachment.ID, err)
 			}
 
 			if appCtx.Config.VerboseDiskLogs {
 				if replace {
-					appCtx.DebugLogger.Printf("Replacing attachment ID %s token count: %d, path: %s, old point ID: %s", att.Attachment.ID, tokenCount, att.Attachment.Path, att.OldPointID)
+					// appCtx.DebugLogger.Printf("Replacing attachment ID %s token count: %d, path: %s, old point ID: %s", att.Attachment.ID, tokenCount, att.Attachment.Path, att.OldPointID)
 				} else {
-					appCtx.DebugLogger.Printf("Inserting attachment ID %s token count: %d, path: %s", att.Attachment.ID, tokenCount, att.Attachment.Path)
+					// appCtx.DebugLogger.Printf("Inserting attachment ID %s token count: %d, path: %s", att.Attachment.ID, tokenCount, att.Attachment.Path)
 				}
 			}
 
@@ -519,7 +519,7 @@ func storeAttachments(attachments []Attachment, packetID string) error {
 
 	if len(toReplace) > 0 {
 		if appCtx.Config.VerboseDiskLogs {
-			appCtx.DebugLogger.Printf("Processing %d attachments for replacement", len(toReplace))
+			// appCtx.DebugLogger.Printf("Processing %d attachments for replacement", len(toReplace))
 		}
 		if err := proc(toReplace); err != nil {
 			return fmt.Errorf("error processing attachments for replacement: %w", err)
@@ -528,7 +528,7 @@ func storeAttachments(attachments []Attachment, packetID string) error {
 
 	if len(toInsert) > 0 {
 		if appCtx.Config.VerboseDiskLogs {
-			appCtx.DebugLogger.Printf("Processing %d attachments for insertion", len(toInsert))
+			// appCtx.DebugLogger.Printf("Processing %d attachments for insertion", len(toInsert))
 		}
 		if err := proc(toInsert); err != nil {
 			return fmt.Errorf("error processing attachments for insertion: %w", err)
@@ -536,7 +536,7 @@ func storeAttachments(attachments []Attachment, packetID string) error {
 	}
 
 	if appCtx.Config.VerboseDiskLogs {
-		appCtx.DebugLogger.Printf("All attachments processed successfully.---------------------------------")
+		// appCtx.DebugLogger.Printf("All attachments processed successfully.---------------------------------")
 	}
 
 	return nil
@@ -566,10 +566,10 @@ func processOutbound(cleanAssistantContent string, cleanUserContent string, atta
 		appCtx.AccessLogger.Printf("Response vector generated. Length: %d", len(responseVector))
 	}
 
-	promptSize := calculateTokensWithReserve(appConsts.UserMessageLeftWrapper + cleanUserContent + appConsts.UserMessageRightWrapper)
-	cleanPromptSize := calculateTokensWithReserve(cleanUserContent)
-	assistantSize := calculateTokensWithReserve(appConsts.AssistantMessageLeftWrapper + cleanAssistantContent + appConsts.AssistantMessageRightWrapper)
-	cleanAssistantSize := calculateTokensWithReserve(cleanAssistantContent)
+	promptSize := calculateTokens(appConsts.UserMessageLeftWrapper + cleanUserContent + appConsts.UserMessageRightWrapper)
+	cleanPromptSize := calculateTokens(cleanUserContent)
+	assistantSize := calculateTokens(appConsts.AssistantMessageLeftWrapper + cleanAssistantContent + appConsts.AssistantMessageRightWrapper)
+	cleanAssistantSize := calculateTokens(cleanAssistantContent)
 
 	appCtx.AccessLogger.Printf("Calculated token sizes - Prompt: %d, Assistant: %d", promptSize, assistantSize)
 

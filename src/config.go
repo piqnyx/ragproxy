@@ -7,7 +7,9 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // validateEnumList validates each value in a list against allowed options
@@ -52,7 +54,7 @@ func compileFilePatterns(cfg *Config) error {
 
 // CheckEmbeddingNormalization tests embedding normalization by embedding a test string
 // and calculating the L2 norm of the resulting vector.
-func CheckEmbeddingNormalization() error {
+func checkEmbeddingNormalization() error {
 	const testStr = "embedding normalization test"
 	vec, err := embedText(testStr)
 	if err != nil {
@@ -109,27 +111,181 @@ func validateSystemMessagePatch(cfg *SystemMessagePatchConfig) error {
 	return nil
 }
 
+// validateReplaceGroups проверяет, что в replaceTpl ссылки на группы ($1 или ${1})
+// точно соответствуют группам, определённым в find (findGroups).
+// Ошибка если:
+//   - replace содержит ссылки, а findGroups == 0
+//   - replace не содержит ссылок, а findGroups > 0
+//   - есть ссылка на группу > findGroups
+//   - количество уникальных ссылок != findGroups (т.е. не все группы упомянуты)
+func validateReplaceGroups(findGroups int, replaceTpl string) error {
+	// ищем $1 или ${1}
+	re, err := regexp.Compile(`\$(\d+)|\$\{(\d+)\}`)
+	if err != nil {
+		// эта регулярка константная и валидна, но на всякий случай
+		return fmt.Errorf("internal validation regex compile failed: %v", err)
+	}
+	matches := re.FindAllStringSubmatch(replaceTpl, -1)
+
+	// если ссылок нет
+	if len(matches) == 0 {
+		if findGroups == 0 {
+			return nil
+		}
+		return fmt.Errorf("replace references no groups but find defines %d", findGroups)
+	}
+
+	// есть ссылки, но в find нет групп
+	if findGroups == 0 {
+		return fmt.Errorf("replace references groups but find has none")
+	}
+
+	seen := make(map[int]struct{}, len(matches))
+	maxRef := 0
+	for _, m := range matches {
+		// m[1] или m[2] содержит номер группы в зависимости от формы
+		var s string
+		if m[1] != "" {
+			s = m[1]
+		} else {
+			s = m[2]
+		}
+		idx, err := strconv.Atoi(s)
+		if err != nil {
+			return fmt.Errorf("invalid group reference '%s' in replace template", s)
+		}
+		if idx < 1 {
+			return fmt.Errorf("invalid group reference %d: groups are 1..%d", idx, findGroups)
+		}
+		if idx > maxRef {
+			maxRef = idx
+		}
+		seen[idx] = struct{}{}
+	}
+
+	if maxRef > findGroups {
+		return fmt.Errorf("replace references group %d but find has only %d groups", maxRef, findGroups)
+	}
+
+	// требование: replace должен ссылаться на все группы, определённые в find
+	if len(seen) != findGroups {
+		return fmt.Errorf("replace references %d groups but find defines %d", len(seen), findGroups)
+	}
+
+	return nil
+}
+
+// initResponseReplaceRules инициализирует правила замены из конфига.
+// - Триггер (ключ) тримится; find и replace НЕ тримятся (пробелы могут быть значимы).
+// - Для find используется regexp.Compile (ошибка возвращается при некорректной regex).
+// - Пустой repl означает удаление совпадений.
+func initResponseReplaceRules() error {
+	// reset storage
+	appCtx.responseReplaceRules = nil
+	appCtx.responseReplaceMaxTriggerLen = 0
+
+	if len(appCtx.Config.ResponseReplacer) == 0 {
+		return nil
+	}
+
+	records := make([]ResponseReplaceRecord, 0, len(appCtx.Config.ResponseReplacer))
+
+	for rawTrig, m := range appCtx.Config.ResponseReplacer {
+		trig := strings.TrimSpace(rawTrig)
+		if trig == "" {
+			return fmt.Errorf("ResponseReplacer contains empty trigger key")
+		}
+		if len(m) == 0 {
+			// нет правил для триггера — пропускаем (можно логировать)
+			appCtx.DebugLogger.Printf("ResponseReplacer: trigger %q has no rules, skipping", trig)
+			continue
+		}
+
+		rules := make([]ResponseMsgReplaceRule, 0, len(m))
+		for find, repl := range m {
+			// НЕ тримим find и repl — пробелы в regex/replace могут быть значимы
+			if strings.TrimSpace(find) == "" {
+				return fmt.Errorf("ResponseReplacer[%s] contains empty find regex", trig)
+			}
+
+			findReg, err := regexp.Compile(find)
+			if err != nil {
+				return fmt.Errorf("ResponseReplacer[%s] invalid find regex '%s': %v", trig, find, err)
+			}
+
+			// repl может быть пустой — это означает удаление
+			if repl != "" {
+				if err := validateReplaceGroups(findReg.NumSubexp(), repl); err != nil {
+					return fmt.Errorf("ResponseReplacer[%s] invalid replace '%s': %v", trig, repl, err)
+				}
+			}
+
+			rules = append(rules, ResponseMsgReplaceRule{
+				Find:    findReg,
+				Replace: repl,
+			})
+		}
+
+		if len(rules) == 0 {
+			continue
+		}
+
+		records = append(records, ResponseReplaceRecord{
+			Trigger: trig,
+			Rules:   rules,
+		})
+
+		// считаем длину триггера в рунах (не в байтах)
+		if l := utf8.RuneCountInString(trig); l > appCtx.responseReplaceMaxTriggerLen {
+			appCtx.responseReplaceMaxTriggerLen = l
+		}
+	}
+	appCtx.responseReplaceMaxTriggerLen *= appCtx.Config.MaxTriggerLengthMultiplier
+	appCtx.responseReplaceMaxTriggerLen += appCtx.Config.MaxTriggerLengthAdditional
+	appCtx.responseReplaceRules = records
+	return nil
+}
+
 // validateConfig checks the configuration for correctness
 func validateConfig(config Config) error {
 	// Listen: IP:port or :port
-	listenRe := regexp.MustCompile(`^(\d{1,3}\.){3}\d{1,3}:\d+$|^:\d+$`)
-	if !listenRe.MatchString(config.Listen) {
-		return fmt.Errorf("`Listen` address is invalid: %s", config.Listen)
+
+	if re, err := regexp.Compile(`^(\d{1,3}\.){3}\d{1,3}:\d+$|^:\d+$`); err == nil {
+		if !re.MatchString(config.Listen) {
+			return fmt.Errorf("`Listen` address is invalid: %s", config.Listen)
+		}
+	} else {
+		return fmt.Errorf("`Listen` address regex compilation failed: %v", err)
 	}
 
 	// IDFFile: path to IDF DB file (non-empty)
 	if strings.TrimSpace(config.IDFFile) == "" {
 		return fmt.Errorf("`IDFFile` path is invalid: %s", config.IDFFile)
 	}
-	// RegEx check for correct path and touch file after this validation
 	if _, err := os.Stat(config.IDFFile); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("`IDFFile` path is invalid or inaccessible: %v", err)
 	}
 
-	// TokenBufferReserve: non-negative integer
-	if config.TokenBufferReserve < 0 {
-		return fmt.Errorf("`TokenBufferReserve` is invalid: %d", config.TokenBufferReserve)
+	// TokenizerHFModelName: only letters, digits, _, -, :, /
+	if re, err := regexp.Compile(`^[a-zA-Z0-9_\-:/]+$`); err == nil {
+		if !re.MatchString(config.TokenizerHFModelName) {
+			return fmt.Errorf("`TokenizerHFModelName` is invalid: %s", config.TokenizerHFModelName)
+		}
+	} else {
+		return fmt.Errorf("`TokenizerHFModelName` regex compilation failed: %v", err)
 	}
+
+	// TokenizerPretrainedCacheDir: path to cache directory (non-empty)
+	if strings.TrimSpace(config.TokenizerPretrainedCacheDir) == "" {
+		return fmt.Errorf("`TokenizerPretrainedCacheDir` path is invalid: %s", config.TokenizerPretrainedCacheDir)
+	}
+	if fi, err := os.Stat(config.TokenizerPretrainedCacheDir); err != nil {
+		return fmt.Errorf("`TokenizerPretrainedCacheDir` does not exist: %v", err)
+	} else if !fi.IsDir() {
+		return fmt.Errorf("`TokenizerPretrainedCacheDir` is not a directory: %s", config.TokenizerPretrainedCacheDir)
+	}
+
+	// TokenizerHFAPI Key: can be empty, no further validation needed
 
 	var err error
 	// UserMessageTags and UserMessageAttachmentTags: comma-separated list of tags (only letters)
@@ -156,22 +312,32 @@ func validateConfig(config Config) error {
 	}
 
 	// OllamaBase: http(s)://host:port
-	ollamaBaseRe := regexp.MustCompile(`^https?://[\w\.\-]+(:\d+)?$`)
-	if !ollamaBaseRe.MatchString(config.OllamaBase) {
-		return fmt.Errorf("`OllamaBase` is invalid: %s", config.OllamaBase)
+	if re, err := regexp.Compile(`^https?://[\w\.\-]+(:\d+)?$`); err == nil {
+		if !re.MatchString(config.OllamaBase) {
+			return fmt.Errorf("`OllamaBase` is invalid: %s", config.OllamaBase)
+		}
+	} else {
+		return fmt.Errorf("`OllamaBase` regex compilation failed: %v", err)
 	}
 
-	ollamaKeepAliveRe := regexp.MustCompile(`^\d+[smhd]$`)
-	if !ollamaKeepAliveRe.MatchString(config.OllamaKeepAlive) {
-		return fmt.Errorf("`OllamaKeepAlive` is invalid: %s", config.OllamaKeepAlive)
+	// OllamaKeepAlive: duration in format like 30s, 5m, 2h, 1d
+	if re, err := regexp.Compile(`^\d+[smhd]$`); err == nil {
+		if !re.MatchString(config.OllamaKeepAlive) {
+			return fmt.Errorf("`OllamaKeepAlive` is invalid: %s", config.OllamaKeepAlive)
+		}
+	} else {
+		return fmt.Errorf("`OllamaKeepAlive` regex compilation failed: %v", err)
 	}
 
 	// OllamaUnloadOnLoVRAM: boolean, no further validation needed
 
 	// EmbeddingModel: only letters, digits, _, -, :, /
-	embeddingModelRe := regexp.MustCompile(`^[a-zA-Z0-9_\-:/]+$`)
-	if !embeddingModelRe.MatchString(config.EmbeddingModel) {
-		return fmt.Errorf("`EmbeddingModel` is invalid: %s", config.EmbeddingModel)
+	if re, err := regexp.Compile(`^[a-zA-Z0-9:\.\-_]+$`); err == nil {
+		if !re.MatchString(config.EmbeddingModel) {
+			return fmt.Errorf("`EmbeddingModel` is invalid: %s", config.EmbeddingModel)
+		}
+	} else {
+		return fmt.Errorf("`EmbeddingModel` regex compilation failed: %v", err)
 	}
 
 	// EmbeddingsEndpoint: starts with /
@@ -185,9 +351,12 @@ func validateConfig(config Config) error {
 	}
 
 	// MainModel: only letters, digits, _, -, :, /
-	mainModelRe := regexp.MustCompile(`^[a-zA-Z0-9_\-:/]+$`)
-	if !mainModelRe.MatchString(config.MainModel) {
-		return fmt.Errorf("`MainModel` is invalid: %s", config.MainModel)
+	if re, err := regexp.Compile(`^[a-zA-Z0-9:._-]+$`); err == nil {
+		if !re.MatchString(config.MainModel) {
+			return fmt.Errorf("`MainModel` is invalid: %s", config.MainModel)
+		}
+	} else {
+		return fmt.Errorf("`MainModel` regex compilation failed: %v", err)
 	}
 
 	// MainModelWindowSize: positive integer
@@ -196,9 +365,12 @@ func validateConfig(config Config) error {
 	}
 
 	// QdrantHost: localhost or IP or hostname
-	hostRe := regexp.MustCompile(`^(localhost|(\d{1,3}\.){3}\d{1,3}|[a-zA-Z0-9\-\.]+)$`)
-	if !hostRe.MatchString(config.QdrantHost) {
-		return fmt.Errorf("`QdrantHost` is invalid: %s", config.QdrantHost)
+	if re, err := regexp.Compile(`^(localhost|(\d{1,3}\.){3}\d{1,3}|[a-zA-Z0-9\-\.]+)$`); err == nil {
+		if !re.MatchString(config.QdrantHost) {
+			return fmt.Errorf("`QdrantHost` is invalid: %s", config.QdrantHost)
+		}
+	} else {
+		return fmt.Errorf("`QdrantHost` regex compilation failed: %v", err)
 	}
 
 	// QdrantPort: 1-65535
@@ -212,9 +384,12 @@ func validateConfig(config Config) error {
 	}
 
 	// QdrantCollection: only letters, digits, _
-	collRe := regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
-	if !collRe.MatchString(config.QdrantCollection) {
-		return fmt.Errorf("`QdrantCollection` is invalid: %s", config.QdrantCollection)
+	if re, err := regexp.Compile(`^[a-zA-Z0-9_]+$`); err == nil {
+		if !re.MatchString(config.QdrantCollection) {
+			return fmt.Errorf("`QdrantCollection` is invalid: %s", config.QdrantCollection)
+		}
+	} else {
+		return fmt.Errorf("`QdrantCollection` regex compilation failed: %v", err)
 	}
 
 	// QdrantMetric: Cosine, Euclid, Dot
@@ -373,6 +548,77 @@ func validateConfig(config Config) error {
 	}
 
 	// VerboseDiskLogs: boolean (no validation needed)
+
+	// InitialIncomingBufferPreAllocation: non-negative integer
+	if config.InitialIncomingBufferPreAllocation < 0 {
+		return fmt.Errorf("`InitialIncomingBufferPreAllocation` is invalid: %d", config.InitialIncomingBufferPreAllocation)
+	}
+
+	// InitialOutgoingGorutineBufferCount: non-negative integer
+	if config.InitialOutgoingGorutineBufferCount < 0 {
+		return fmt.Errorf("`InitialOutgoingGorutineBufferCount` is invalid: %d", config.InitialOutgoingGorutineBufferCount)
+	}
+
+	// MessageBodyPaths: non-empty array of non-empty strings
+	if len(config.MessageBodyPaths) == 0 {
+		return fmt.Errorf("`MessageBodyPaths` is empty")
+	}
+	for i, path := range config.MessageBodyPaths {
+		if strings.TrimSpace(path) == "" {
+			return fmt.Errorf("`MessageBodyPaths[%d]` is empty", i)
+		}
+	}
+
+	// SSEPrefixReg: non-empty valid regexp
+	if strings.TrimSpace(config.SSEPrefixReg) == "" {
+		return fmt.Errorf("`SSEPrefixReg` is empty")
+	}
+	appCtx.ssePrefixReg, err = regexp.Compile(config.SSEPrefixReg)
+	if err != nil {
+		return fmt.Errorf("`SSEPrefixReg` is invalid: %v", err)
+	}
+
+	// StreamingPacketFlagReg: non-empty valid regexp
+	if strings.TrimSpace(config.StreamingPacketFlagReg) == "" {
+		return fmt.Errorf("`StreamingPacketFlagReg` is empty")
+	}
+	appCtx.streamingPacketFlagReg, err = regexp.Compile(config.StreamingPacketFlagReg)
+	if err != nil {
+		return fmt.Errorf("`StreamingPacketFlagReg` is invalid: %v", err)
+	}
+
+	// StreamingPacketStopReg: non-empty valid regexp
+	if strings.TrimSpace(config.StreamingPacketStopReg) == "" {
+		return fmt.Errorf("`StreamingPacketStopReg` is empty")
+	}
+	appCtx.streamingPacketStopReg, err = regexp.Compile(config.StreamingPacketStopReg)
+	if err != nil {
+		return fmt.Errorf("`StreamingPacketStopReg` is invalid: %v", err)
+	}
+
+	// DirectPacketFlagReg: non-empty valid regexp
+	if strings.TrimSpace(config.DirectPacketFlagReg) == "" {
+		return fmt.Errorf("`DirectPacketFlagReg` is empty")
+	}
+	appCtx.directPacketFlagReg, err = regexp.Compile(config.DirectPacketFlagReg)
+	if err != nil {
+		return fmt.Errorf("`DirectPacketFlagReg` is invalid: %v", err)
+	}
+
+	// MaxTriggerLengthMultiplier: positive integer
+	if config.MaxTriggerLengthMultiplier < 1 {
+		return fmt.Errorf("`MaxTriggerLengthMultiplier` is invalid: %d", config.MaxTriggerLengthMultiplier)
+	}
+
+	// MaxTriggerLengthAdditional: non-negative integer
+	if config.MaxTriggerLengthAdditional < 0 {
+		return fmt.Errorf("`MaxTriggerLengthAdditional` is invalid: %d", config.MaxTriggerLengthAdditional)
+	}
+
+	// ResponseReplacer: map[string]map[string]string
+	if err := initResponseReplaceRules(); err != nil {
+		return err
+	}
 
 	// SystemMessageFile: path to IDF DB file (non-empty)
 	if strings.TrimSpace(config.SystemMessageFile) == "" {

@@ -1,0 +1,33 @@
+[Unit]
+Description=llama.cpp server
+After=network.target
+
+[Service]
+Type=simple
+User=piqnyx
+Group=piqnyx
+WorkingDirectory=/home/piqnyx/.local/bin/ragproxy/llama.cpp
+ExecStart=/home/piqnyx/.local/bin/ragproxy/llama.cpp/build/bin/llama-server \
+  --model /home/piqnyx/.local/bin/ragproxy/models/Devstral-Small-2-24B-Instruct-2512-UD-Q8_K_XL.gguf \
+  --models-dir /home/piqnyx/.local/bin/ragproxy/models/ \
+  --host 0.0.0.0 \
+  --port 8080 \
+  --gpu-layers -1 \
+  --fit on \
+  --temp 0.15 \
+  --jinja \
+  --fit-target 1024 \
+  --threads 32 \
+  --threads-http 8 \
+  --ctx-size 262144 \
+  --fit-ctx 16384 \
+  --cache-ram -1 \
+  --host 0.0.0.0 \
+  --webui \
+  --log-file /var/log/ragproxy/llama-server.log
+Restart=on-failure
+LimitNOFILE=65536
+LimitNPROC=65536
+
+[Install]
+WantedBy=multi-user.target

@@ -66,9 +66,9 @@ func loadIDF() error {
 func initEmptyIDFStore() {
 	appCtx.idfMu.Lock()
 	appCtx.IDFStore = IDFStore{
-		DF:          make(map[int]int),
+		DF:          make(map[uint32]int),
 		N:           0,
-		IDF:         make(map[int]float64),
+		IDF:         make(map[uint32]float64),
 		NgramDF:     make(map[uint64]int),
 		NgramIDF:    make(map[uint64]float64),
 		TotalTokens: 0,
@@ -112,7 +112,7 @@ func updateDocumentInIDF(body string, tokenCount int, hash string, mode int) err
 		return err
 	}
 
-	seenTokens := make(map[int]struct{})
+	seenTokens := make(map[uint32]struct{})
 	seenNgrams := make(map[uint64]struct{})
 
 	appCtx.idfMu.Lock()

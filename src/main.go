@@ -16,8 +16,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/daulet/tokenizers"
 	"github.com/pelletier/go-toml/v2"
-	"github.com/pkoukk/tiktoken-go"
 )
 
 var appCtx AppContext
@@ -28,16 +28,19 @@ func initApp(configPath string) error {
 	var err error
 	// Initialize global app context
 	appCtx = AppContext{
-		Config:              Config{},
-		DB:                  nil, // Will be used with withDB per call
-		Tokenizer:           nil,
-		JournaldLogger:      nil,
-		AccessLogger:        nil,
-		ErrorLogger:         nil,
-		DebugLogger:         nil,
-		IDFChanged:          false,
-		idfAutoSaveStopChan: make(chan struct{}),
-		idfAutoSaveWG:       sync.WaitGroup{},
+		Config:                       Config{},
+		DB:                           nil, // Will be used with withDB per call
+		Tokenizer:                    nil,
+		JournaldLogger:               nil,
+		AccessLogger:                 nil,
+		ErrorLogger:                  nil,
+		DebugLogger:                  nil,
+		DumpLogger:                   nil,
+		IDFChanged:                   false,
+		idfAutoSaveStopChan:          make(chan struct{}),
+		idfAutoSaveWG:                sync.WaitGroup{},
+		responseReplaceRules:         []ResponseReplaceRecord{},
+		responseReplaceMaxTriggerLen: 0,
 	}
 
 	// Check if the 'ragproxy' user exists
@@ -47,7 +50,7 @@ func initApp(configPath string) error {
 	}
 
 	// Set up logging
-	appCtx.JournaldLogger, appCtx.AccessLogger, appCtx.ErrorLogger, appCtx.DebugLogger = setupLogging()
+	appCtx.JournaldLogger, appCtx.AccessLogger, appCtx.ErrorLogger, appCtx.DebugLogger, appCtx.DumpLogger = setupLogging()
 
 	// Read and parse config file
 	var configData []byte
@@ -69,10 +72,12 @@ func initApp(configPath string) error {
 
 	appCtx.JournaldLogger.Printf("Config file %s parsed successfully", configPath)
 
-	appCtx.Tokenizer, err = tiktoken.GetEncoding("cl100k_base")
+	appCtx.Tokenizer, err = tokenizers.FromPretrained(appCtx.Config.TokenizerHFModelName,
+		tokenizers.WithCacheDir(appCtx.Config.TokenizerPretrainedCacheDir),
+		tokenizers.WithAuthToken(appCtx.Config.TokenizerHFAPI))
 	if err != nil {
-		appCtx.ErrorLogger.Printf("Error initializing tiktoken encoder: %v", err)
-		appCtx.JournaldLogger.Printf("Error initializing tiktoken encoder: %v", err)
+		appCtx.ErrorLogger.Printf("Error initializing Tokenizer: %v", err)
+		appCtx.JournaldLogger.Printf("Error initializing Tokenizer: %v", err)
 		return err
 	}
 	appCtx.JournaldLogger.Printf("Tokenizer initialized successfully")
@@ -110,7 +115,7 @@ func initApp(configPath string) error {
 	}
 
 	// Check embedding normalization
-	if err := CheckEmbeddingNormalization(); err != nil {
+	if err := checkEmbeddingNormalization(); err != nil {
 		appCtx.ErrorLogger.Printf("Embedding normalization check failed: %v", err)
 		appCtx.JournaldLogger.Printf("Embedding normalization check failed: %v", err)
 		return err
@@ -180,8 +185,8 @@ func runApp() error {
 			appCtx.AccessLogger.Printf("Received request: %s %s", r.Method, r.URL)
 		}
 
-		// Using StreamCollectorWriter to capture streaming response
-		collector := &StreamCollectorWriter{ResponseWriter: w}
+		// Using ResponseCollector to capture streaming response
+		collector := NewResponseCollector(w)
 
 		// Log full request if verbose
 		if appCtx.Config.VerboseDiskLogs {
@@ -193,7 +198,17 @@ func runApp() error {
 		outbound.ServeHTTP(collector, r)
 
 		// After the stream is complete, collect and process the response for the database
-		collector.CloseAndProcess(cleanUserContent, attachments, promptVector, queryHash)
+		var cleanAssistantContent string
+		var wasMessages bool
+		if cleanAssistantContent, wasMessages, err = collector.CloseAndProcess(); err != nil {
+			appCtx.ErrorLogger.Printf("Error in CloseAndProcess: %v", err)
+			appCtx.JournaldLogger.Printf("Error in CloseAndProcess: %v", err)
+		}
+		// Stop the outgoing loop and finish goroutine
+		collector.StopOutgoingLoop()
+		if wasMessages && len(cleanAssistantContent) > 0 {
+			processOutbound(cleanAssistantContent, cleanUserContent, attachments, promptVector, queryHash)
+		}
 
 	})
 
@@ -256,6 +271,13 @@ func shutdownApp(dontSaveIDF bool) {
 		close(appCtx.idfAutoSaveStopChan)
 		appCtx.idfAutoSaveWG.Wait()
 	}
+
+	// Close tokenizer
+	if appCtx.Tokenizer != nil {
+		appCtx.Tokenizer.Close()
+		appCtx.JournaldLogger.Printf("Tokenizer closed successfully")
+	}
+
 	// Log shutdown completion
 	appCtx.JournaldLogger.Printf("Ragproxy stopped")
 }
@@ -304,13 +326,13 @@ func main() {
 		err = runApp()
 	} else {
 		dontSaveIDF = true
-		// err = testFunc()
-		// if err != nil {
-		// 	fmt.Printf("Tests failed: %v\n", err)
-		// 	os.Exit(1)
-		// } else {
-		// 	fmt.Printf("All tests passed successfully.\n")
-		// }
+		err = testFunc()
+		if err != nil {
+			fmt.Printf("Tests failed: %v\n", err)
+			os.Exit(1)
+		} else {
+			fmt.Printf("All tests passed successfully.\n")
+		}
 	}
 
 	// Always shutdown even if runApp returned error

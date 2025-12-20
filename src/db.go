@@ -151,11 +151,11 @@ func SearchRelevantContentWithRerank(queryVector []float32, queryText string, qu
 		return nil, err
 	}
 
-	appCtx.DebugLogger.Printf("Search returned %d candidates before reranking", len(candidates))
+	// appCtx.DebugLogger.Printf("Search returned %d candidates before reranking", len(candidates))
 	qFull, err := getCachedTokenIDs(queryHash, queryText)
 	if err != nil {
 		appCtx.ErrorLogger.Printf("tokenize query error: %v", err)
-		qFull = []int{}
+		qFull = []uint32{}
 	}
 	qUnique := uniqueInts(qFull)
 
@@ -170,8 +170,8 @@ func SearchRelevantContentWithRerank(queryVector []float32, queryText string, qu
 		qUnique = qUnique[:queryLimit] // mutate once here is fine
 	}
 
-	docUnique := make([][]int, len(candidates))
-	docFull := make([][]int, len(candidates))
+	docUnique := make([][]uint32, len(candidates))
+	docFull := make([][]uint32, len(candidates))
 	for i := range candidates {
 		dIDs, _ := getCachedTokenIDs(candidates[i].Payload.Hash, candidates[i].Payload.Body)
 		docFull[i] = dIDs
@@ -179,7 +179,7 @@ func SearchRelevantContentWithRerank(queryVector []float32, queryText string, qu
 	}
 
 	// Precompute per-document term-frequency maps
-	docTFs := make([]map[int]int, len(candidates))
+	docTFs := make([]map[uint32]int, len(candidates))
 	for i := range candidates {
 		docTFs[i] = buildTermFreq(docFull[i]) // buildTermFreq expects []int
 	}
@@ -193,11 +193,11 @@ func SearchRelevantContentWithRerank(queryVector []float32, queryText string, qu
 	}
 	appCtx.idfMu.RUnlock()
 
-	appCtx.DebugLogger.Printf("Updated features for %d candidates", len(candidates))
-	for i := range candidates {
-		appCtx.DebugLogger.Printf("\tCandidate %d features: %+v", i, candidates[i].Features)
-		appCtx.DebugLogger.Printf("\tCandidate %d body (first 100 chars): %.100s", i, candidates[i].Payload.Body)
-	}
+	// appCtx.DebugLogger.Printf("Updated features for %d candidates", len(candidates))
+	// for i := range candidates {
+	// 	appCtx.DebugLogger.Printf("\tCandidate %d features: %+v", i, candidates[i].Features)
+	// 	appCtx.DebugLogger.Printf("\tCandidate %d body (first 100 chars): %.100s", i, candidates[i].Payload.Body)
+	// }
 
 	for i := range candidates {
 		score, err := scoreCandidate(candidates[i].Features, appCtx.Config.DefaultWeights)
@@ -208,19 +208,19 @@ func SearchRelevantContentWithRerank(queryVector []float32, queryText string, qu
 			candidates[i].Score = score
 		}
 	}
-	appCtx.DebugLogger.Printf("Reranked %d candidates", len(candidates))
-	for i := range candidates {
-		appCtx.DebugLogger.Printf("\tCandidate %d final score: %.4f", i, candidates[i].Score)
-	}
+	// appCtx.DebugLogger.Printf("Reranked %d candidates", len(candidates))
+	// for i := range candidates {
+	// 	appCtx.DebugLogger.Printf("\tCandidate %d final score: %.4f", i, candidates[i].Score)
+	// }
 
 	filtered := make([]Candidate, 0, len(candidates))
 	for _, cand := range candidates {
 		if cand.Score >= appCtx.Config.MinRankScore {
-			appCtx.DebugLogger.Printf("Candidate passed MinRankScore %.4f: score=%.4f", appCtx.Config.MinRankScore, cand.Score)
+			// appCtx.DebugLogger.Printf("Candidate passed MinRankScore %.4f: score=%.4f", appCtx.Config.MinRankScore, cand.Score)
 			filtered = append(filtered, cand)
 		}
 	}
-	appCtx.DebugLogger.Printf("%d candidates passed MinRankScore %.4f", len(filtered), appCtx.Config.MinRankScore)
+	// appCtx.DebugLogger.Printf("%d candidates passed MinRankScore %.4f", len(filtered), appCtx.Config.MinRankScore)
 
 	sort.Slice(filtered, func(i, j int) bool {
 		return filtered[i].Score > filtered[j].Score
@@ -230,11 +230,11 @@ func SearchRelevantContentWithRerank(queryVector []float32, queryText string, qu
 	if topN > 0 && len(filtered) > topN {
 		filtered = filtered[:topN]
 	}
-	appCtx.DebugLogger.Printf("Returning top %d candidates after reranking", len(filtered))
-	for i := range filtered {
-		appCtx.DebugLogger.Printf("\tFinal Candidate %d score: %.4f", i, filtered[i].Score)
-		appCtx.DebugLogger.Printf("\tFinal Candidate %d body (first 100 chars): %.100s", i, filtered[i].Payload.Body)
-	}
+	// appCtx.DebugLogger.Printf("Returning top %d candidates after reranking", len(filtered))
+	// for i := range filtered {
+	// 	appCtx.DebugLogger.Printf("\tFinal Candidate %d score: %.4f", i, filtered[i].Score)
+	// 	appCtx.DebugLogger.Printf("\tFinal Candidate %d body (first 100 chars): %.100s", i, filtered[i].Payload.Body)
+	// }
 
 	// collect payloads of top candidates
 	payloads := make([]Payload, len(filtered))
@@ -259,8 +259,8 @@ func SearchRelevantContent(queryVector []float32) ([]Candidate, error) {
 
 		appCtx.AccessLogger.Printf("Searching relevant content with roles: %v, maxAgeDays: %d, topK: %d, queryVector length: %d",
 			roles, maxAgeDays, topKCfg, len(queryVector))
-		appCtx.DebugLogger.Printf("Searching relevant content with roles: %v, maxAgeDays: %d, topK: %d, queryVector length: %d",
-			roles, maxAgeDays, topKCfg, len(queryVector))
+		// appCtx.DebugLogger.Printf("Searching relevant content with roles: %v, maxAgeDays: %d, topK: %d, queryVector length: %d",
+		// roles, maxAgeDays, topKCfg, len(queryVector))
 
 		// Build filter conditions
 		var conditions []*qdrant.Condition
@@ -317,7 +317,7 @@ func SearchRelevantContent(queryVector []float32) ([]Candidate, error) {
 		}
 
 		appCtx.AccessLogger.Printf("Qdrant search returned %d results", len(resp))
-		appCtx.DebugLogger.Printf("Qdrant search returned %d results", len(resp))
+		// appCtx.DebugLogger.Printf("Qdrant search returned %d results", len(resp))
 
 		// cutoff by score/distance depending on metric
 		pass := func(score float32) bool {
@@ -334,7 +334,7 @@ func SearchRelevantContent(queryVector []float32) ([]Candidate, error) {
 		results = make([]Candidate, 0, len(resp))
 		for _, point := range resp {
 			if !pass(point.Score) {
-				appCtx.DebugLogger.Printf("Skipping point %s with score %.4f due to cutoff", point.Id, point.Score)
+				// appCtx.DebugLogger.Printf("Skipping point %s with score %.4f due to cutoff", point.Id, point.Score)
 				continue
 			}
 
@@ -376,10 +376,10 @@ func SearchRelevantContent(queryVector []float32) ([]Candidate, error) {
 			if appCtx.Config.VerboseDiskLogs {
 				if payload.FileMeta.ID != "" {
 					appCtx.AccessLogger.Printf("hit score=%.4f role=%s file id=%s path=%s", point.Score, payload.Role, payload.FileMeta.ID, payload.FileMeta.Path)
-					appCtx.DebugLogger.Printf("hit score=%.4f role=%s file id=%s path=%s", point.Score, payload.Role, payload.FileMeta.ID, payload.FileMeta.Path)
+					// appCtx.DebugLogger.Printf("hit score=%.4f role=%s file id=%s path=%s", point.Score, payload.Role, payload.FileMeta.ID, payload.FileMeta.Path)
 				} else {
 					appCtx.AccessLogger.Printf("hit score=%.4f role=%s", point.Score, payload.Role)
-					appCtx.DebugLogger.Printf("hit score=%.4f role=%s", point.Score, payload.Role)
+					// appCtx.DebugLogger.Printf("hit score=%.4f role=%s", point.Score, payload.Role)
 				}
 			}
 
@@ -433,7 +433,7 @@ func SearchRelevantContent(queryVector []float32) ([]Candidate, error) {
 		}
 
 		appCtx.AccessLogger.Printf("Filtered to %d results after applying score/distance cutoff", len(results))
-		appCtx.DebugLogger.Printf("Filtered to %d results after applying score/distance cutoff", len(results))
+		// appCtx.DebugLogger.Printf("Filtered to %d results after applying score/distance cutoff", len(results))
 		return nil
 	})
 
